@@ -1,5 +1,5 @@
 [Unit]
-Description=Keel Node app %i
+Description=Schela Node app %i
 After=network.target
 
 [Service]
@@ -8,7 +8,7 @@ User=%i
 Group=%i
 WorkingDirectory=/home/%i/app
 Environment=NODE_ENV=production
-EnvironmentFile=-/var/lib/keel/apps/%i.env
+EnvironmentFile=-/var/lib/schela/apps/%i.env
 ExecStart=/usr/local/bin/node /home/%i/app/__ENTRY__
 Restart=on-failure
 RestartSec=3

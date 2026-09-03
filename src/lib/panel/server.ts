@@ -125,7 +125,7 @@ async function readSettings(sql: Sql): Promise<PanelSettings> {
   const row = rows[0];
   if (!row) {
     return {
-      hostname: process.env.KEEL_HOSTNAME?.trim() || "panel.keel.local",
+      hostname: process.env.SCHELA_HOSTNAME?.trim() || "panel.schela.local",
       isolation: true,
       setupComplete: false,
       sshPort: 22,
@@ -172,12 +172,12 @@ async function seedBaseFirewall(sql: Sql) {
 async function ensureSetup(sql: Sql): Promise<void> {
   const existing = await sql<{ id: number }>`select id from panel_settings where id = 1`;
   if (existing.length === 0) {
-    const hostname = process.env.KEEL_HOSTNAME?.trim() || "panel.keel.local";
+    const hostname = process.env.SCHELA_HOSTNAME?.trim() || "panel.schela.local";
     await sql`
       insert into panel_settings (id, hostname, isolation, setup_complete, ssh_port, auto_updates)
       values (1, ${hostname}, true, true, 22, true)
     `;
-    await logActivity(sql, "setup", "Keel is ready");
+    await logActivity(sql, "setup", "Schela is ready");
   }
   await seedModules(sql, ["php", "node", "firewall", "ssl", "mail", "dns", "backups"]);
   await seedBaseFirewall(sql);
@@ -238,7 +238,7 @@ export const completeSetup = createServerFn({ method: "POST" })
     const enabled = new Set(["ssl", ...data.modules]);
     await seedModules(sql, [...enabled]);
     await seedBaseFirewall(sql);
-    await logActivity(sql, "setup", "Keel is ready");
+    await logActivity(sql, "setup", "Schela is ready");
     const settings = await readSettings(sql);
     const modules = (await sql<Record<string, unknown>>`
       select * from modules order by sort_order
@@ -307,7 +307,7 @@ async function certFor(domain: string, ssl: boolean): Promise<CertInfo> {
   if (!ssl) return { status: "off", message: "TLS is off for this site", expires: null };
   try {
     const fs = await import("node:fs/promises");
-    const raw = await fs.readFile("/var/lib/keel/certs.json", "utf8");
+    const raw = await fs.readFile("/var/lib/schela/certs.json", "utf8");
     const all = JSON.parse(raw) as Record<
       string,
       { status?: string; message?: string; expires?: string }
@@ -709,7 +709,7 @@ export const createDnsZone = createServerFn({ method: "POST" })
     `;
     const zone = mapZone(rows[0]);
     const ip = isVpsApply() ? publicIp() : "203.0.113.10";
-    const ns = isVpsApply() ? `ns1.${name}` : "ns1.keel.local";
+    const ns = isVpsApply() ? `ns1.${name}` : "ns1.schela.local";
     await sql`
       insert into dns_records (zone_id, type, name, value, ttl, priority)
       values
@@ -816,7 +816,7 @@ export const getAdminIdentity = createServerFn({ method: "GET" })
     const rows = await sql<{ email: string }>`
       select email from "user" where id = ${context.userId}
     `;
-    const email = rows[0]?.email ?? "admin@keel.local";
+    const email = rows[0]?.email ?? "admin@schela.local";
     return { username: displayUsername(email), email };
   });
 

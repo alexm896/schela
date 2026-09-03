@@ -1,6 +1,6 @@
 /** Internal Better Auth email for the default `admin` username. */
-export const DEFAULT_ADMIN_EMAIL = "admin@keel.local";
-export const LOCAL_ADMIN_DOMAIN = "keel.local";
+export const DEFAULT_ADMIN_EMAIL = "admin@schela.local";
+export const LOCAL_ADMIN_DOMAIN = "schela.local";
 
 export function toAuthEmail(raw: string): string {
   const value = raw.trim().toLowerCase();
@@ -23,8 +23,8 @@ export function loginEmails(raw: string, hostname?: string): string[] {
   const emails = [toAuthEmail(value)];
   if (hostname) {
     const host = hostname.includes(".") ? hostname : `${hostname}.local`;
-    const legacy = `${value}@${host}`;
-    if (!emails.includes(legacy)) emails.push(legacy);
+    const extra = `${value}@${host}`;
+    if (!emails.includes(extra)) emails.push(extra);
   }
   return emails;
 }

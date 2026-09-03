@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Privileged file ops for the Keel panel. JSON on stdin, JSON on stdout.
+"""Privileged file ops for the Schela panel. JSON on stdin, JSON on stdout.
 
-The panel user `keel` may sudo this binary with no password. Every path is
+The panel user `schela` may sudo this binary with no password. Every path is
 restricted to /home/<site-or-app-user>/(www|app). New files are chowned to that user.
 """
 from __future__ import annotations
@@ -368,7 +368,7 @@ def op_copy(jail: str, rel: str, to: str, user: str) -> dict[str, Any]:
 def main() -> None:
     if len(sys.argv) > 1 and sys.argv[1] in ("-h", "--help"):
         sys.stdout.write(
-            "keel-files — JSON on stdin. Ops: list read write create mkdir rename delete chmod copy move\n"
+            "schela-files — JSON on stdin. Ops: list read write create mkdir rename delete chmod copy move\n"
         )
         return
     try:

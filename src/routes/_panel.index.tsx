@@ -83,7 +83,7 @@ function Overview() {
         description={`${data.settings.hostname} · up ${formatUptime(data.metrics.uptimeSec)}`}
       />
 
-      <div className="keel-enter grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="schela-enter grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Metric
           label="CPU"
           value={data.metrics.cpu.toFixed(1)}

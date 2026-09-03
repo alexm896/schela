@@ -6,7 +6,7 @@ RUN apt-get update -y \
     python3 bash ca-certificates adduser tar rsync jq nginx openssl \
   && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /opt/keel
-COPY installer /opt/keel/installer
+WORKDIR /opt/schela
+COPY installer /opt/schela/installer
 
-CMD ["bash", "/opt/keel/installer/test/run.sh"]
+CMD ["bash", "/opt/schela/installer/test/run.sh"]

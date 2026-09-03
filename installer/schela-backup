@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Keel backups: tar locally, then push the same archive with rsync and/or S3.
+"""Schela backups: tar locally, then push the same archive with rsync and/or S3.
 
-JSON on stdout. Reads jobs from /var/lib/keel/state.json (or stdin for tests).
+JSON on stdout. Reads jobs from /var/lib/schela/state.json (or stdin for tests).
 """
 from __future__ import annotations
 
@@ -17,8 +17,8 @@ import sys
 import tarfile
 from urllib.parse import quote
 
-STATE = os.environ.get("KEEL_STATE", "/var/lib/keel/state.json")
-ROOT = os.environ.get("KEEL_BACKUP_ROOT", "/var/lib/keel/backups")
+STATE = os.environ.get("SCHELA_STATE", "/var/lib/schela/state.json")
+ROOT = os.environ.get("SCHELA_BACKUP_ROOT", "/var/lib/schela/backups")
 HISTORY = os.path.join(ROOT, "history.jsonl")
 
 
@@ -39,10 +39,10 @@ def job_slug(name: str, job_id: int) -> str:
 
 def app_home(name: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:20] or "app"
-    return f"/home/ka_{slug}"
+    return f"/home/sa_{slug}"
 
 
-USER_RE = re.compile(r"^(s_|ka_)[a-z0-9_-]{1,30}$")
+USER_RE = re.compile(r"^(s_|sa_)[a-z0-9_-]{1,30}$")
 
 
 def allowed_src(src: str) -> bool:
@@ -53,7 +53,7 @@ def allowed_src(src: str) -> bool:
         state_real = STATE
     if real == state_real:
         return True
-    mail = "/var/mail/keel"
+    mail = "/var/mail/schela"
     if real == mail or real.startswith(mail + os.sep):
         return True
     parts = real.split(os.sep)
@@ -90,8 +90,8 @@ def collect_paths(state: dict, job: dict) -> list[tuple[str, str]]:
                 out.append((f"app-{app.get('domain')}", app_home(name)))
     if include_mail or scope == "mail":
         if scope in ("all", "mail") or include_mail:
-            if os.path.isdir("/var/mail/keel"):
-                out.append(("mail", "/var/mail/keel"))
+            if os.path.isdir("/var/mail/schela"):
+                out.append(("mail", "/var/mail/schela"))
     if os.path.isfile(STATE):
         out.append(("panel-state", STATE))
     # de-dupe
@@ -128,7 +128,7 @@ def prune(dir_path: str, retain: int) -> None:
         [
             os.path.join(dir_path, n)
             for n in os.listdir(dir_path)
-            if n.startswith("keel-") and n.endswith(".tar.gz")
+            if n.startswith("schela-") and n.endswith(".tar.gz")
         ]
     )
     while len(files) > max(1, retain):
@@ -177,7 +177,7 @@ def sha256_file(path: str) -> str:
 
 def s3_put(archive: str, job: dict) -> str:
     bucket = str(job.get("s3Bucket") or "")
-    prefix = str(job.get("s3Prefix") or "keel/")
+    prefix = str(job.get("s3Prefix") or "schela/")
     region = str(job.get("s3Region") or "us-east-1")
     access = str(job.get("s3AccessKey") or "")
     secret = str(job.get("s3SecretKey") or "")
@@ -266,7 +266,7 @@ def run_job(state: dict, job: dict) -> dict:
     if dest_dir != root_real and not dest_dir.startswith(root_real + os.sep):
         raise ValueError("backup path leaves store")
     os.makedirs(dest_dir, exist_ok=True)
-    archive = os.path.join(dest_dir, f"keel-{stamp()}.tar.gz")
+    archive = os.path.join(dest_dir, f"schela-{stamp()}.tar.gz")
     paths = collect_paths(state, job)
     local_ok = False
     rsync_ok = False
@@ -342,7 +342,7 @@ def find_job(state: dict, job_id: int) -> dict:
 
 def main() -> None:
     if len(sys.argv) > 1 and sys.argv[1] in ("-h", "--help"):
-        sys.stdout.write("keel-backup run <id> | keel-backup cron\n")
+        sys.stdout.write("schela-backup run <id> | schela-backup cron\n")
         return
     try:
         state = load_state()
@@ -354,7 +354,7 @@ def main() -> None:
     try:
         if cmd == "run":
             if len(sys.argv) < 3:
-                fail("usage: keel-backup run <id>")
+                fail("usage: schela-backup run <id>")
             job = find_job(state, int(sys.argv[2]))
             out = run_job(state, job)
             sys.stdout.write(json.dumps(out) + "\n")
@@ -366,7 +366,7 @@ def main() -> None:
                 results.append(run_job(state, job))
             sys.stdout.write(json.dumps({"ok": True, "ran": len(results)}) + "\n")
         else:
-            fail("usage: keel-backup run <id> | keel-backup cron")
+            fail("usage: schela-backup run <id> | schela-backup cron")
     except (ValueError, OSError, RuntimeError) as exc:
         fail(str(exc) or exc.__class__.__name__)
 

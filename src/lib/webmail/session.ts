@@ -1,7 +1,7 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { getCookie, getRequest, setCookie } from "@tanstack/react-start/server";
 
-const COOKIE = "keel_webmail";
+const COOKIE = "schela_webmail";
 const MAX_AGE = 8 * 60 * 60;
 
 export type WebmailSession = {
@@ -15,11 +15,11 @@ const store = new Map<string, Stored>();
 
 function secretBytes(): Buffer {
   const raw =
-    process.env.BETTER_AUTH_SECRET?.trim() || process.env.KEEL_WEBMAIL_SECRET?.trim() || "";
-  if (process.env.KEEL_APPLY === "1" && raw.length < 16) {
+    process.env.BETTER_AUTH_SECRET?.trim() || process.env.SCHELA_WEBMAIL_SECRET?.trim() || "";
+  if (process.env.SCHELA_APPLY === "1" && raw.length < 16) {
     throw new Error("Webmail requires BETTER_AUTH_SECRET on the server");
   }
-  return Buffer.from(raw || "keel-webmail-dev-only", "utf8");
+  return Buffer.from(raw || "schela-webmail-dev-only", "utf8");
 }
 
 function sign(id: string): string {
@@ -29,7 +29,7 @@ function sign(id: string): string {
 function cookieSecure(): boolean {
   const req = getRequest();
   const proto = req?.headers.get("x-forwarded-proto") || "";
-  return proto === "https" || process.env.KEEL_APPLY === "1";
+  return proto === "https" || process.env.SCHELA_APPLY === "1";
 }
 
 function prune() {

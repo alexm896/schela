@@ -67,7 +67,7 @@ export async function sendSmtp(opts: {
       void (async () => {
         try {
           await expect(sock, null, 220);
-          await expect(sock, "EHLO keel.webmail", 250);
+          await expect(sock, "EHLO schela.webmail", 250);
           await expect(sock, `MAIL FROM:<${opts.from}>`, 250);
           for (const rcpt of opts.to) {
             await expect(sock, `RCPT TO:<${rcpt}>`, 250);

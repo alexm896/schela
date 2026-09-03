@@ -74,7 +74,7 @@ const emptyForm = (): FormState => ({
   rsyncSshKey: "",
   s3Enabled: false,
   s3Bucket: "",
-  s3Prefix: "keel/",
+  s3Prefix: "schela/",
   s3Region: "us-east-1",
   s3AccessKey: "",
   s3SecretKey: "",
@@ -336,7 +336,7 @@ function BackupsPage() {
           <DialogHeader>
             <DialogTitle>{editId ? "Edit backup" : "New backup"}</DialogTitle>
             <DialogDescription>
-              Local tar.gz is always written to /var/lib/keel/backups. Rsync and S3 are extra
+              Local tar.gz is always written to /var/lib/schela/backups. Rsync and S3 are extra
               copies of that same file, run together.
             </DialogDescription>
           </DialogHeader>
@@ -440,7 +440,7 @@ function BackupsPage() {
                 <Badge variant="ok">always</Badge>
               </div>
               <p className="mt-1 text-xs text-muted-foreground">
-                /var/lib/keel/backups — never skipped
+                /var/lib/schela/backups — never skipped
               </p>
             </div>
 
@@ -459,7 +459,7 @@ function BackupsPage() {
                     <Input
                       value={form.rsyncDest}
                       onChange={(e) => patch({ rsyncDest: e.target.value })}
-                      placeholder="user@offsite:/backups/keel"
+                      placeholder="user@offsite:/backups/schela"
                       className="font-mono text-xs"
                       spellCheck={false}
                     />
@@ -469,7 +469,7 @@ function BackupsPage() {
                     <Input
                       value={form.rsyncSshKey}
                       onChange={(e) => patch({ rsyncSshKey: e.target.value })}
-                      placeholder="/var/lib/keel/backup_id_ed25519"
+                      placeholder="/var/lib/schela/backup_id_ed25519"
                       className="font-mono text-xs"
                       spellCheck={false}
                     />

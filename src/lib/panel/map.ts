@@ -143,7 +143,7 @@ export function mapBackupJob(row: Record<string, unknown>): BackupJob {
     rsyncSshKey: String(row.rsync_ssh_key ?? ""),
     s3Enabled: bool(row.s3_enabled),
     s3Bucket: String(row.s3_bucket ?? ""),
-    s3Prefix: String(row.s3_prefix ?? "keel/"),
+    s3Prefix: String(row.s3_prefix ?? "schela/"),
     s3Region: String(row.s3_region ?? "us-east-1"),
     s3AccessKey: String(row.s3_access_key ?? ""),
     s3HasSecret: secret.length > 0,

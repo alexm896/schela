@@ -12,9 +12,9 @@ const boxes = new Map<string, DemoBox>();
 function seed(addr: string): DemoBox {
   const now = new Date().toUTCString();
   const welcomeRaw =
-    `From: Keel <noreply@${addr.split("@")[1] || "keel.local"}>\r\n` +
+    `From: Schela <noreply@${addr.split("@")[1] || "schela.local"}>\r\n` +
     `To: ${addr}\r\n` +
-    `Subject: Welcome to Keel webmail\r\n` +
+    `Subject: Welcome to Schela webmail\r\n` +
     `Date: ${now}\r\n` +
     `Content-Type: text/plain; charset=utf-8\r\n` +
     `\r\n` +

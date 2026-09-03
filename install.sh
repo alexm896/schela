@@ -1,5 +1,5 @@
 #!/bin/bash
-# Keel — install from the repo root.
+# Schela — install from the repo root.
 #   git clone <this-repo> && cd <this-repo>
 #   sudo bash install.sh
 set -euo pipefail

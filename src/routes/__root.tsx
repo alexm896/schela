@@ -10,7 +10,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "sonner";
 import appCss from "../styles.css?url";
 
-const APP_NAME = "Keel";
+const APP_NAME = "Schela";
 
 export const Route = createRootRoute({
   head: () => ({
@@ -21,7 +21,7 @@ export const Route = createRootRoute({
       {
         name: "description",
         content:
-          "Keel is a tiny, fast hosting panel — PHP, Node.js, mail, DNS, and a firewall. Installs in minutes.",
+          "Schela is a tiny, fast hosting panel — PHP, Node.js, mail, DNS, and a firewall. Installs in minutes.",
       },
       { name: "theme-color", content: "#09090b" },
     ],

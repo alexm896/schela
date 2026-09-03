@@ -15,7 +15,7 @@ import {
   renameAt,
   writeFileAt,
 } from "./files";
-import { appVirtRoot, virtJoin, virtNormalize, virtParent, type FileTarget } from "./file-types";
+import { virtJoin, virtNormalize, virtParent, type FileTarget } from "./file-types";
 import { mapApp, mapSite } from "./map";
 
 const targetSchema = z.object({
@@ -69,7 +69,8 @@ async function resolveTarget(
   `;
   if (!rows[0]) throw new Error("App not found");
   const app = mapApp(rows[0]);
-  const virtRoot = appVirtRoot(app.name);
+  const user = appSystemUser(app.name);
+  const virtRoot = `/home/${user}/app`;
   return {
     virtRoot,
     seed: { kind: "app", domain: app.domain },
@@ -78,7 +79,7 @@ async function resolveTarget(
       id: app.id,
       label: app.domain,
       domain: app.domain,
-      user: appSystemUser(app.name),
+      user,
       virtRoot,
     },
   };
@@ -111,7 +112,7 @@ export const listFileTargets = createServerFn({ method: "GET" })
         label: app.domain,
         domain: app.domain,
         user: appSystemUser(app.name),
-        virtRoot: appVirtRoot(app.name),
+        virtRoot: `/home/${appSystemUser(app.name)}/app`,
       })),
     ];
     return targets;

@@ -1,6 +1,11 @@
-# Keel
+# Schela
 
 A small, fast hosting control panel for a **fresh Ubuntu or Debian VPS**.
+
+*Schelă* is Romanian for scaffolding — raise the frame, then put the sites on it.
+
+**https://schela.org**
+
 
 PHP 8.1–8.4, Node 18/20/22, per-site jails, UFW, optional mail and DNS. The panel is the source of truth — every site, app, firewall, mailbox, and zone is written onto the box.
 
@@ -9,8 +14,8 @@ PHP 8.1–8.4, Node 18/20/22, per-site jails, UFW, optional mail and DNS. The pa
 On a **new** Ubuntu 22.04 / 24.04 or Debian 12 machine as root. 2 GB RAM recommended.
 
 ```bash
-git clone https://github.com/imariusalin/keel.git
-cd keel
+git clone https://github.com/imariusalin/schela.git
+cd schela
 sudo bash install.sh
 ```
 
@@ -37,21 +42,21 @@ Sites never run as root. Each one is its own user (`s_…`) with `open_basedir` 
 ## After install
 
 ```bash
-sudo keel apply          # rewrite nginx / PHP / UFW / mail / DNS from panel state
-sudo keel apply --dry-run
-sudo keel doctor
-sudo keel status
+sudo schela apply          # rewrite nginx / PHP / UFW / mail / DNS from panel state
+sudo schela apply --dry-run
+sudo schela doctor
+sudo schela status
 ```
 
-The panel writes `/var/lib/keel/state.json` and runs `sudo keel-apply`. Managed files live under `/etc/nginx/keel.d`, `/etc/nginx/keel-apps.d`, and `/etc/php/*/fpm/pool.d/keel-*`. Distro defaults are left alone.
+The panel writes `/var/lib/schela/state.json` and runs `sudo schela-apply`. Managed files live under `/etc/nginx/schela.d`, `/etc/nginx/schela-apps.d`, and `/etc/php/*/fpm/pool.d/schela-*`. Distro defaults are left alone.
 
 ## Layout
 
 | Path | Role |
 |---|---|
-| `/opt/keel` | panel |
-| `/var/lib/keel` | database + state |
-| `/usr/local/sbin/keel-apply` | apply engine |
+| `/opt/schela` | panel |
+| `/var/lib/schela` | database + state |
+| `/usr/local/sbin/schela-apply` | apply engine |
 | `/home/<site-user>/www` | site files |
 
 ## Notes
@@ -59,8 +64,8 @@ The panel writes `/var/lib/keel/state.json` and runs `sudo keel-apply`. Managed 
 - Run on a **new** machine. The installer resets UFW.
 - Port 22 is always left open.
 - `.example` / `.local` / `.test` domains skip Let's Encrypt.
-- Mail and DNS packages are installed when those modules are in `KEEL_MODULES` (default: all).
-- Optional env: `KEEL_HOSTNAME`, `KEEL_MODULES=php,node,firewall,ssl`, `KEEL_PANEL_PORT=9090`.
+- Mail and DNS packages are installed when those modules are in `SCHELA_MODULES` (default: all).
+- Optional env: `SCHELA_HOSTNAME`, `SCHELA_MODULES=php,node,firewall,ssl`, `SCHELA_PANEL_PORT=9090`.
 
 ## License
 

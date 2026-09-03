@@ -29,7 +29,7 @@ import {
 } from "./files.ts";
 
 async function withJail<T>(run: (jail: string) => Promise<T>): Promise<T> {
-  const jail = await mkdtemp(join(tmpdir(), "keel-fm-"));
+  const jail = await mkdtemp(join(tmpdir(), "schela-fm-"));
   try {
     return await run(jail);
   } finally {
@@ -58,7 +58,7 @@ describe("path jail", () => {
     assert.throws(() => assertVirtRoot("/etc/passwd"), /Home directory/);
     assert.throws(() => assertVirtRoot("/home/../www"), /Home directory/);
     assert.equal(assertVirtRoot("/home/s_site/www"), "/home/s_site/www");
-    assert.equal(appVirtRoot("API Example"), "/home/ka_api-example/app");
+    assert.equal(appVirtRoot("API Example"), "/home/sa_api-example/app");
   });
 
   it("joinJail stays inside the physical root", async () => {
@@ -140,7 +140,7 @@ describe("local file ops", () => {
   it("does not follow a symlink out of the jail", async () => {
     if (process.platform === "win32") return;
     await withJail(async (jail) => {
-      const outside = await mkdtemp(join(tmpdir(), "keel-fm-out-"));
+      const outside = await mkdtemp(join(tmpdir(), "schela-fm-out-"));
       try {
         await writeFile(join(outside, "secret.txt"), "classified");
         await symlink(join(outside, "secret.txt"), join(jail, "leak.txt"));

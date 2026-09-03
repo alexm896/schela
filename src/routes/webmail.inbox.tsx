@@ -2,7 +2,7 @@ import { createFileRoute, redirect, useRouter } from "@tanstack/react-router";
 import { Inbox, LogOut, PenLine, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { KeelMark } from "@/components/keel-mark";
+import { SchelaMark } from "@/components/schela-mark";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -132,7 +132,7 @@ function WebmailInbox() {
   return (
     <div className="flex min-h-dvh flex-col bg-background">
       <header className="flex h-14 items-center gap-3 border-b border-border px-4">
-        <KeelMark className="size-7" />
+        <SchelaMark className="size-7" />
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-medium">{who.address}</p>
           <p className="text-[11px] text-muted-foreground">Webmail · encrypted session</p>

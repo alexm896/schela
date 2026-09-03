@@ -75,7 +75,7 @@ export const getRedisStatus = createServerFn({ method: "GET" })
     let requirepass = "";
     try {
       const fs = await import("node:fs/promises");
-      const raw = (await fs.readFile("/var/lib/keel/redis.pass", "utf8")).trim();
+      const raw = (await fs.readFile("/var/lib/schela/redis.pass", "utf8")).trim();
       if (/^[a-f0-9]{32,64}$/.test(raw)) requirepass = raw;
     } catch {
       requirepass = "";

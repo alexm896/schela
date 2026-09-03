@@ -1,14 +1,14 @@
 #!/bin/bash
-# Apply /var/lib/keel/state.json onto this machine. Idempotent. Root only.
+# Apply /var/lib/schela/state.json onto this machine. Idempotent. Root only.
 set -euo pipefail
 
-STATE="${KEEL_STATE:-/var/lib/keel/state.json}"
-TEMPLATES="${KEEL_TEMPLATES:-/usr/local/share/keel/templates}"
+STATE="${SCHELA_STATE:-/var/lib/schela/state.json}"
+TEMPLATES="${SCHELA_TEMPLATES:-/usr/local/share/schela/templates}"
 DRY=0
 [ "${1:-}" = "--dry-run" ] && DRY=1
 
-log() { printf 'keel-apply: %s\n' "$*"; }
-die() { printf 'keel-apply: %s\n' "$*" >&2; exit 1; }
+log() { printf 'schela-apply: %s\n' "$*"; }
+die() { printf 'schela-apply: %s\n' "$*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || die "missing $1"; }
 
 ok_domain() { [[ "$1" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$ ]]; }
@@ -71,8 +71,8 @@ render() {
   printf '%s' "$out"
 }
 
-ACME_ROOT="/var/lib/keel/acme"
-CERTS_JSON="/var/lib/keel/certs.json"
+ACME_ROOT="/var/lib/schela/acme"
+CERTS_JSON="/var/lib/schela/certs.json"
 
 wants_ssl() {
   case "${1:-}" in true|1|t|yes) ;; *) return 1 ;; esac
@@ -104,10 +104,10 @@ SSL_DOMAINS=()
 
 apply_sites() {
   SSL_DOMAINS=()
-  mkdir -p /etc/nginx/keel.d
+  mkdir -p /etc/nginx/schela.d
   if [ "$DRY" -eq 0 ]; then
-    find /etc/nginx/keel.d -name 'site-*.conf' -delete 2>/dev/null || true
-    find /etc/php -path '*/fpm/pool.d/keel-*.conf' -delete 2>/dev/null || true
+    find /etc/nginx/schela.d -name 'site-*.conf' -delete 2>/dev/null || true
+    find /etc/php -path '*/fpm/pool.d/schela-*.conf' -delete 2>/dev/null || true
   fi
 
   while IFS= read -r site; do
@@ -159,7 +159,7 @@ apply_sites() {
       conf="$(printf '%s\n' "$conf" | grep -v open_basedir | grep -v disable_functions)"
     fi
     mkdir -p "/etc/php/${php}/fpm/pool.d"
-    write_file "/etc/php/${php}/fpm/pool.d/keel-${pool}.conf" "$conf"
+    write_file "/etc/php/${php}/fpm/pool.d/schela-${pool}.conf" "$conf"
 
     if wants_ssl "$ssl" "$domain" && cert_live "$domain" && truthy "$force"; then
       vhost="$(render "$TEMPLATES/nginx-site-force.conf" \
@@ -168,13 +168,13 @@ apply_sites() {
       vhost="$(render "$TEMPLATES/nginx-site.conf" \
         __DOMAIN__ "$domain" __ROOT__ "$root" __SOCKET__ "$socket" __BIND_80__ "$http_bind")"
     fi
-    write_file "/etc/nginx/keel.d/site-${domain}.conf" "$vhost"
+    write_file "/etc/nginx/schela.d/site-${domain}.conf" "$vhost"
     if wants_ssl "$ssl" "$domain" && cert_live "$domain"; then
       sslv="$(render "$TEMPLATES/nginx-site-ssl.conf" \
         __DOMAIN__ "$domain" __ROOT__ "$root" __SOCKET__ "$socket" __BIND_443__ "$https_bind")"
-      write_file "/etc/nginx/keel.d/site-${domain}-ssl.conf" "$sslv"
+      write_file "/etc/nginx/schela.d/site-${domain}-ssl.conf" "$sslv"
     else
-      rm -f "/etc/nginx/keel.d/site-${domain}-ssl.conf"
+      rm -f "/etc/nginx/schela.d/site-${domain}-ssl.conf"
     fi
 
     if wants_ssl "$ssl" "$domain"; then
@@ -194,9 +194,9 @@ apply_sites() {
 
 # --- node apps -------------------------------------------------------------
 apply_apps() {
-  mkdir -p /etc/nginx/keel-apps.d /var/lib/keel/apps
+  mkdir -p /etc/nginx/schela-apps.d /var/lib/schela/apps
   if [ "$DRY" -eq 0 ]; then
-    find /etc/nginx/keel-apps.d -name 'app-*.conf' -delete 2>/dev/null || true
+    find /etc/nginx/schela-apps.d -name 'app-*.conf' -delete 2>/dev/null || true
   fi
 
   while IFS= read -r app; do
@@ -212,8 +212,8 @@ apply_apps() {
     http_bind="$(bind_http "$ip")"
     https_bind="$(bind_https "$ip")"
     slug="$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-' | sed 's/^-//;s/-$//')"
-    unit="keel-app-${slug}"
-    user="ka_${slug:0:20}"
+    unit="schela-app-${slug}"
+    user="sa_${slug:0:20}"
 
     ok_domain "$domain" || { log "skip app, bad domain"; continue; }
     ok_node "$ver" || { log "skip $name, bad node $ver"; continue; }
@@ -228,7 +228,7 @@ apply_apps() {
     if [ "$DRY" -eq 0 ]; then
       mkdir -p "/home/$user/app"
       chown -R "$user:$user" "/home/$user"
-      printf 'PORT=%s\nNODE_VERSION=%s\n' "$port" "$ver" >"/var/lib/keel/apps/${user}.env"
+      printf 'PORT=%s\nNODE_VERSION=%s\n' "$port" "$ver" >"/var/lib/schela/apps/${user}.env"
 
       NODE_BIN="/usr/local/bin/node"
       if [ -d /usr/local/n/versions/node ]; then
@@ -240,7 +240,7 @@ apply_apps() {
 
       cat >"/etc/systemd/system/${unit}.service" <<UNIT
 [Unit]
-Description=Keel Node app ${name}
+Description=Schela Node app ${name}
 After=network.target
 [Service]
 Type=simple
@@ -267,14 +267,14 @@ UNIT
 
     vhost="$(render "$TEMPLATES/nginx-node.conf" \
       __DOMAIN__ "$domain" __PORT__ "$port" __BIND_80__ "$http_bind")"
-    write_file "/etc/nginx/keel-apps.d/app-${domain}.conf" "$vhost"
+    write_file "/etc/nginx/schela-apps.d/app-${domain}.conf" "$vhost"
     if [[ ! "$domain" =~ \.(example|local|test)$ ]]; then
       if cert_live "$domain"; then
         sslv="$(render "$TEMPLATES/nginx-node-ssl.conf" \
           __DOMAIN__ "$domain" __PORT__ "$port" __BIND_443__ "$https_bind")"
-        write_file "/etc/nginx/keel-apps.d/app-${domain}-ssl.conf" "$sslv"
+        write_file "/etc/nginx/schela-apps.d/app-${domain}-ssl.conf" "$sslv"
       else
-        rm -f "/etc/nginx/keel-apps.d/app-${domain}-ssl.conf"
+        rm -f "/etc/nginx/schela-apps.d/app-${domain}-ssl.conf"
       fi
       SSL_DOMAINS+=("$domain")
     fi
@@ -318,13 +318,13 @@ apply_mail() {
   mod_on mail || return 0
   [ -d /etc/postfix ] || return 0
   [ "$DRY" -eq 1 ] && { log "would apply mail maps"; return; }
-  mkdir -p /var/lib/keel/mail /var/mail/keel
+  mkdir -p /var/lib/schela/mail /var/mail/schela
   if ! id -u vmail >/dev/null 2>&1; then
-    useradd --system --home /var/mail/keel --shell "$(nologin_shell)" vmail
+    useradd --system --home /var/mail/schela --shell "$(nologin_shell)" vmail
   fi
-  : >/var/lib/keel/mail/vmailbox
-  : >/var/lib/keel/mail/vdomains
-  : >/var/lib/keel/mail/users
+  : >/var/lib/schela/mail/vmailbox
+  : >/var/lib/schela/mail/vdomains
+  : >/var/lib/schela/mail/users
   while IFS= read -r box; do
     [ -n "$box" ] || continue
     addr="$(jq -r '.address' <<<"$box")"
@@ -336,54 +336,54 @@ apply_mail() {
     [[ "$quota" =~ ^[0-9]+$ ]] || quota=2048
     domain="${addr#*@}"
     localpart="${addr%@*}"
-    printf '%s %s/\n' "$addr" "$domain/$localpart" >>/var/lib/keel/mail/vmailbox
-    grep -qxF "$domain" /var/lib/keel/mail/vdomains 2>/dev/null || echo "$domain" >>/var/lib/keel/mail/vdomains
-    mkdir -p "/var/mail/keel/${domain}/${localpart}"
+    printf '%s %s/\n' "$addr" "$domain/$localpart" >>/var/lib/schela/mail/vmailbox
+    grep -qxF "$domain" /var/lib/schela/mail/vdomains 2>/dev/null || echo "$domain" >>/var/lib/schela/mail/vdomains
+    mkdir -p "/var/mail/schela/${domain}/${localpart}"
     if [[ "$hash" == \{SSHA512\}* ]]; then
-      printf '%s:%s:vmail:vmail::/var/mail/keel/%s/%s::userdb_quota_rule=*:storage=%sM\n' \
-        "$addr" "$hash" "$domain" "$localpart" "$quota" >>/var/lib/keel/mail/users
+      printf '%s:%s:vmail:vmail::/var/mail/schela/%s/%s::userdb_quota_rule=*:storage=%sM\n' \
+        "$addr" "$hash" "$domain" "$localpart" "$quota" >>/var/lib/schela/mail/users
     fi
-    mkdir -p /var/lib/keel/dkim
-    if [ ! -f "/var/lib/keel/dkim/${domain}.private" ] && command -v opendkim-genkey >/dev/null 2>&1; then
-      opendkim-genkey -D /var/lib/keel/dkim -s mail -d "$domain" >/dev/null 2>&1 || true
-      if [ -f /var/lib/keel/dkim/mail.private ]; then
-        mv /var/lib/keel/dkim/mail.private "/var/lib/keel/dkim/${domain}.private"
-        mv /var/lib/keel/dkim/mail.txt "/var/lib/keel/dkim/${domain}.txt" 2>/dev/null || true
+    mkdir -p /var/lib/schela/dkim
+    if [ ! -f "/var/lib/schela/dkim/${domain}.private" ] && command -v opendkim-genkey >/dev/null 2>&1; then
+      opendkim-genkey -D /var/lib/schela/dkim -s mail -d "$domain" >/dev/null 2>&1 || true
+      if [ -f /var/lib/schela/dkim/mail.private ]; then
+        mv /var/lib/schela/dkim/mail.private "/var/lib/schela/dkim/${domain}.private"
+        mv /var/lib/schela/dkim/mail.txt "/var/lib/schela/dkim/${domain}.txt" 2>/dev/null || true
       fi
     fi
   done < <(jq -c '.mailboxes // [] | .[]' "$STATE")
-  chown -R vmail:vmail /var/mail/keel
-  postmap /var/lib/keel/mail/vmailbox 2>/dev/null || true
+  chown -R vmail:vmail /var/mail/schela
+  postmap /var/lib/schela/mail/vmailbox 2>/dev/null || true
   vuid="$(id -u vmail)"
   vgid="$(id -g vmail)"
-  postconf -e "virtual_mailbox_base = /var/mail/keel"
-  postconf -e "virtual_mailbox_maps = hash:/var/lib/keel/mail/vmailbox"
-  postconf -e "virtual_mailbox_domains = /var/lib/keel/mail/vdomains"
+  postconf -e "virtual_mailbox_base = /var/mail/schela"
+  postconf -e "virtual_mailbox_maps = hash:/var/lib/schela/mail/vmailbox"
+  postconf -e "virtual_mailbox_domains = /var/lib/schela/mail/vdomains"
   postconf -e "virtual_minimum_uid = 100"
   postconf -e "virtual_uid_maps = static:${vuid}"
   postconf -e "virtual_gid_maps = static:${vgid}"
   if [ -d /etc/dovecot/conf.d ]; then
-    cat >/etc/dovecot/conf.d/99-keel.conf <<'DOVE'
-# Managed by keel-apply
+    cat >/etc/dovecot/conf.d/99-schela.conf <<'DOVE'
+# Managed by schela-apply
 protocols = imap
-mail_location = maildir:/var/mail/keel/%d/%n
+mail_location = maildir:/var/mail/schela/%d/%n
 mail_uid = vmail
 mail_gid = vmail
 first_valid_uid = 100
 passdb {
   driver = passwd-file
-  args = scheme=SSHA512 username_format=%u /var/lib/keel/mail/users
+  args = scheme=SSHA512 username_format=%u /var/lib/schela/mail/users
 }
 userdb {
   driver = passwd-file
-  args = username_format=%u /var/lib/keel/mail/users
+  args = username_format=%u /var/lib/schela/mail/users
 }
 ssl = yes
 disable_plaintext_auth = no
 auth_mechanisms = plain login
 DOVE
-    chmod 644 /etc/dovecot/conf.d/99-keel.conf
-    chmod 640 /var/lib/keel/mail/users
+    chmod 644 /etc/dovecot/conf.d/99-schela.conf
+    chmod 640 /var/lib/schela/mail/users
     systemctl reload dovecot >/dev/null 2>&1 || systemctl restart dovecot >/dev/null 2>&1 || true
   fi
   systemctl reload postfix >/dev/null 2>&1 || true
@@ -392,7 +392,7 @@ DOVE
 # --- cron ------------------------------------------------------------------
 apply_cron() {
   [ "$DRY" -eq 1 ] && { log "would apply cron jobs"; return; }
-  dest=/etc/cron.d/keel-jobs
+  dest=/etc/cron.d/schela-jobs
   {
     echo "SHELL=/bin/sh"
     echo "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -422,7 +422,7 @@ apply_cron() {
 # --- backups ---------------------------------------------------------------
 apply_backups() {
   [ "$DRY" -eq 1 ] && { log "would apply backup cron"; return; }
-  dest=/etc/cron.d/keel-backups
+  dest=/etc/cron.d/schela-backups
   {
     echo "SHELL=/bin/sh"
     echo "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -435,12 +435,12 @@ apply_backups() {
       sched="$(jq -r '.schedule' <<<"$job")"
       [[ "$id" =~ ^[0-9]+$ ]] || continue
       [[ "$sched" =~ ^[0-9*/,[:space:]-]+$ ]] || continue
-      printf '%s root /usr/local/sbin/keel-backup run %s\n' "$sched" "$id"
+      printf '%s root /usr/local/sbin/schela-backup run %s\n' "$sched" "$id"
     done < <(jq -c '.backups // [] | .[]' "$STATE")
   } >"$dest"
   chmod 644 "$dest"
-  mkdir -p /var/lib/keel/backups
-  chown keel:keel /var/lib/keel/backups 2>/dev/null || true
+  mkdir -p /var/lib/schela/backups
+  chown schela:schela /var/lib/schela/backups 2>/dev/null || true
 }
 
 # --- redis -----------------------------------------------------------------
@@ -470,17 +470,17 @@ apply_redis() {
       unit="$(redis_unit)"
     fi
     if [ -d /etc/redis ]; then
-      passfile=/var/lib/keel/redis.pass
+      passfile=/var/lib/schela/redis.pass
       if [ ! -s "$passfile" ]; then
         umask 077
         openssl rand -hex 24 >"$passfile"
       fi
-      chown keel:keel "$passfile" 2>/dev/null || true
+      chown schela:schela "$passfile" 2>/dev/null || true
       chmod 600 "$passfile"
       rpass="$(tr -d '\n' <"$passfile")"
       [[ "$rpass" =~ ^[a-f0-9]{32,64}$ ]] || die "bad redis password file"
-      cat >/etc/redis/keel.conf <<EOF
-# Managed by keel-apply — localhost only. Package is never removed on disable.
+      cat >/etc/redis/schela.conf <<EOF
+# Managed by schela-apply — localhost only. Package is never removed on disable.
 bind 127.0.0.1
 protected-mode yes
 port 6379
@@ -491,13 +491,13 @@ rename-command FLUSHDB ""
 rename-command CONFIG ""
 EOF
       if id -u redis >/dev/null 2>&1; then
-        chown root:redis /etc/redis/keel.conf
+        chown root:redis /etc/redis/schela.conf
       else
-        chown root:root /etc/redis/keel.conf
+        chown root:root /etc/redis/schela.conf
       fi
-      chmod 640 /etc/redis/keel.conf
-      if [ -f /etc/redis/redis.conf ] && ! grep -q '/etc/redis/keel.conf' /etc/redis/redis.conf; then
-        printf '\ninclude /etc/redis/keel.conf\n' >>/etc/redis/redis.conf
+      chmod 640 /etc/redis/schela.conf
+      if [ -f /etc/redis/redis.conf ] && ! grep -q '/etc/redis/schela.conf' /etc/redis/redis.conf; then
+        printf '\ninclude /etc/redis/schela.conf\n' >>/etc/redis/redis.conf
       fi
     fi
     log "redis on — enable and start ${unit} (starts at boot)"
@@ -523,15 +523,15 @@ apply_dns() {
   mod_on dns || return 0
   [ -d /etc/bind ] || return 0
   [ "$DRY" -eq 1 ] && { log "would apply bind zones"; return; }
-  mkdir -p /var/lib/keel/bind
-  : >/etc/bind/keel-zones.conf
+  mkdir -p /var/lib/schela/bind
+  : >/etc/bind/schela-zones.conf
   while IFS= read -r zone; do
     [ -n "$zone" ] || continue
     zname="$(jq -r '.name' <<<"$zone")"
     serial="$(jq -r '.serial' <<<"$zone")"
     ok_domain "$zname" || continue
     [[ "$serial" =~ ^[0-9]+$ ]] || serial="$(date +%Y%m%d01)"
-    zfile="/var/lib/keel/bind/${zname}.zone"
+    zfile="/var/lib/schela/bind/${zname}.zone"
     {
       echo "\$TTL 300"
       echo "@ IN SOA ns1.${zname}. hostmaster.${zname}. (${serial} 3600 600 86400 300)"
@@ -556,18 +556,18 @@ apply_dns() {
           echo "${n} ${ttl} IN ${t} ${v}"
         fi
       done < <(jq -c '.records // [] | .[]' <<<"$zone")
-      if [ -f "/var/lib/keel/dkim/${zname}.txt" ]; then
-        p="$(tr -d '\n" ' <"/var/lib/keel/dkim/${zname}.txt" | sed -n 's/.*p=\([^;]*\).*/\1/p')"
+      if [ -f "/var/lib/schela/dkim/${zname}.txt" ]; then
+        p="$(tr -d '\n" ' <"/var/lib/schela/dkim/${zname}.txt" | sed -n 's/.*p=\([^;]*\).*/\1/p')"
         if [ -n "$p" ]; then
           echo "mail._domainkey 300 IN TXT \"v=DKIM1; k=rsa; p=${p}\""
         fi
       fi
     } >"$zfile"
     chmod 644 "$zfile"
-    echo "zone \"${zname}\" { type master; file \"${zfile}\"; };" >>/etc/bind/keel-zones.conf
+    echo "zone \"${zname}\" { type master; file \"${zfile}\"; };" >>/etc/bind/schela-zones.conf
   done < <(jq -c '.dns.zones // [] | .[]' "$STATE")
-  grep -q 'keel-zones.conf' /etc/bind/named.conf.local 2>/dev/null || \
-    echo 'include "/etc/bind/keel-zones.conf";' >>/etc/bind/named.conf.local
+  grep -q 'schela-zones.conf' /etc/bind/named.conf.local 2>/dev/null || \
+    echo 'include "/etc/bind/schela-zones.conf";' >>/etc/bind/named.conf.local
   named-checkconf >/dev/null 2>&1 && systemctl reload bind9 >/dev/null 2>&1 || true
 }
 
@@ -575,7 +575,7 @@ issue_certs() {
   [ "$DRY" -eq 0 ] || return 0
   command -v certbot >/dev/null 2>&1 || { log "certbot missing"; return 0; }
   mkdir -p "$ACME_ROOT/.well-known/acme-challenge"
-  chmod 755 /var/lib/keel "$ACME_ROOT" "$ACME_ROOT/.well-known" "$ACME_ROOT/.well-known/acme-challenge" || true
+  chmod 755 /var/lib/schela "$ACME_ROOT" "$ACME_ROOT/.well-known" "$ACME_ROOT/.well-known/acme-challenge" || true
   echo '{' >"$CERTS_JSON.tmp"
   first=1
   NEW_CERTS=0
@@ -611,8 +611,8 @@ issue_certs() {
         message="$(tail -n 8 "$out" | tr '\n' ' ' | sed 's/"/\\"/g' | cut -c1-400)"
         [ -n "$message" ] || message="Let's Encrypt failed (is DNS pointing here? port 80 open?)"
         log "certbot failed for $domain: $message"
-        mkdir -p /var/log/keel
-        cp "$out" "/var/log/keel/certbot-${domain}.log" || true
+        mkdir -p /var/log/schela
+        cp "$out" "/var/log/schela/certbot-${domain}.log" || true
       fi
       rm -f "$out"
     fi

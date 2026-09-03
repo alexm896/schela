@@ -80,7 +80,7 @@ export function assertS3Prefix(raw: string): string {
   let t = raw.trim().replace(/^\/+/, "");
   if (t && !t.endsWith("/")) t += "/";
   if (/[\n\r;|&$`]/.test(t)) throw new Error("Invalid S3 prefix");
-  return t || "keel/";
+  return t || "schela/";
 }
 
 export function parseBackupScope(raw: string): BackupScope {

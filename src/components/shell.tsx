@@ -17,7 +17,7 @@ import {
   Shield,
 } from "lucide-react";
 import { useState } from "react";
-import { KeelMark } from "@/components/keel-mark";
+import { SchelaMark } from "@/components/schela-mark";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { UserButton } from "@/lib/auth/gates";
@@ -117,8 +117,8 @@ function NavList({
 function Brand() {
   return (
     <Link to="/" className="flex items-center gap-2.5 px-1">
-      <KeelMark className="size-7" />
-      <span className="text-base font-semibold tracking-tight">Keel</span>
+      <SchelaMark className="size-7" />
+      <span className="text-base font-semibold tracking-tight">Schela</span>
     </Link>
   );
 }
@@ -127,7 +127,7 @@ function ServerChip({ hostname }: { hostname: string }) {
   return (
     <div className="flex items-center gap-2 rounded-lg bg-secondary px-3 py-2.5">
       <span className="relative flex size-2">
-        <span className="absolute inline-flex size-full rounded-full bg-ok opacity-60 [animation:keel-pulse-dot_2.4s_ease-in-out_infinite]" />
+        <span className="absolute inline-flex size-full rounded-full bg-ok opacity-60 [animation:schela-pulse-dot_2.4s_ease-in-out_infinite]" />
         <span className="relative inline-flex size-2 rounded-full bg-ok" />
       </span>
       <div className="min-w-0">
@@ -154,7 +154,7 @@ function SidebarBody({
       <div className="shrink-0">
         <Brand />
       </div>
-      <div className="keel-sidebar-scroll mt-8 min-h-0 flex-1 overflow-y-auto overscroll-contain">
+      <div className="schela-sidebar-scroll mt-8 min-h-0 flex-1 overflow-y-auto overscroll-contain">
         <NavList pathname={pathname} enabled={enabled} onNavigate={onNavigate} />
       </div>
       <div className="shrink-0 pt-4">

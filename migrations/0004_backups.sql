@@ -14,7 +14,7 @@ create table if not exists backup_jobs (
   rsync_ssh_key text not null default '',
   s3_enabled boolean not null default false,
   s3_bucket text not null default '',
-  s3_prefix text not null default 'keel/',
+  s3_prefix text not null default 'schela/',
   s3_region text not null default 'us-east-1',
   s3_access_key text not null default '',
   s3_secret_key text not null default '',

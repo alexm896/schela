@@ -21,12 +21,12 @@ import { mapApp, mapBackupJob, mapSite } from "./map";
 import { assertCronSchedule } from "./net";
 
 function isVpsApply(): boolean {
-  return process.env.KEEL_APPLY === "1";
+  return process.env.SCHELA_APPLY === "1";
 }
 
 function backupRoot(): string {
-  if (isVpsApply()) return "/var/lib/keel/backups";
-  return path.join(tmpdir(), "keel-files", "backups");
+  if (isVpsApply()) return "/var/lib/schela/backups";
+  return path.join(tmpdir(), "schela-files", "backups");
 }
 
 function historyPath(): string {
@@ -121,7 +121,7 @@ const jobInput = z.object({
   rsyncSshKey: z.string().max(240).default(""),
   s3Enabled: z.boolean().default(false),
   s3Bucket: z.string().max(80).default(""),
-  s3Prefix: z.string().max(120).default("keel/"),
+  s3Prefix: z.string().max(120).default("schela/"),
   s3Region: z.string().max(40).default("us-east-1"),
   s3AccessKey: z.string().max(128).default(""),
   s3SecretKey: z.string().max(256).default(""),
@@ -257,10 +257,10 @@ async function sandboxRun(job: BackupJob): Promise<BackupRun> {
   const startedAt = new Date().toISOString();
   const dir = path.join(backupRoot(), `${job.id}-${job.name.replace(/[^a-z0-9]+/gi, "-").slice(0, 24)}`);
   await fs.mkdir(dir, { recursive: true });
-  const localPath = path.join(dir, `keel-${stamp()}.tar.gz`);
+  const localPath = path.join(dir, `schela-${stamp()}.tar.gz`);
   const body = gzipSync(
     Buffer.from(
-      `keel sandbox backup\njob=${job.name}\nscope=${job.scope}\nwhen=${startedAt}\n`,
+      `schela sandbox backup\njob=${job.name}\nscope=${job.scope}\nwhen=${startedAt}\n`,
       "utf8",
     ),
   );
@@ -295,7 +295,7 @@ async function sandboxRun(job: BackupJob): Promise<BackupRun> {
 async function vpsRun(jobId: number): Promise<BackupRun> {
   if (typeof window !== "undefined") throw new Error("Backups run on the server");
   return new Promise((resolve, reject) => {
-    const child = spawn("sudo", ["-n", "/usr/local/sbin/keel-backup", "run", String(jobId)], {
+    const child = spawn("sudo", ["-n", "/usr/local/sbin/schela-backup", "run", String(jobId)], {
       stdio: ["ignore", "pipe", "pipe"],
     });
     let out = "";
@@ -327,7 +327,7 @@ async function vpsRun(jobId: number): Promise<BackupRun> {
         }
         resolve(parsed);
       } catch {
-        reject(new Error(err.trim() || line || `keel-backup exited ${code}`));
+        reject(new Error(err.trim() || line || `schela-backup exited ${code}`));
       }
     });
   });

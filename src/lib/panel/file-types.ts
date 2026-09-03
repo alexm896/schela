@@ -251,5 +251,5 @@ export function appVirtRoot(name: string): string {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "")
     .slice(0, 20);
-  return `/home/ka_${slug || "app"}/app`;
+  return `/home/sa_${slug || "app"}/app`;
 }

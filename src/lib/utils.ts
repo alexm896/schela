@@ -39,14 +39,14 @@ export function nodeUserFromDomain(domain: string) {
   return `n_${slug || "app"}`;
 }
 
-/** Matches keel-apply: `ka_` + slug of the app name, max 20. */
+/** Matches schela-apply: `sa_` + slug of the app name, max 20. */
 export function appSystemUser(name: string) {
   const slug = name
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "")
     .slice(0, 20);
-  return `ka_${slug || "app"}`;
+  return `sa_${slug || "app"}`;
 }
 
 export function normalizeDomain(raw: string) {

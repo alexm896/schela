@@ -1,0 +1,28 @@
+[Unit]
+Description=Schela hosting panel
+After=network.target
+
+[Service]
+Type=simple
+User=schela
+Group=schela
+WorkingDirectory=/opt/schela
+Environment=NODE_ENV=production
+Environment=SCHELA_APPLY=1
+Environment=SCHELA_VPS=1
+Environment=SCHELA_DATA_DIR=/var/lib/schela/pglite
+Environment=SCHELA_STATE=/var/lib/schela/state.json
+Environment=PORT=9090
+Environment=HOST=127.0.0.1
+Environment=NITRO_PORT=9090
+Environment=NITRO_HOST=127.0.0.1
+Environment=SCHELA_HOSTNAME=__HOSTNAME__
+Environment=SCHELA_PUBLIC_IP=__PUBLIC_IP__
+EnvironmentFile=-/var/lib/schela/admin.env
+ExecStart=/usr/bin/node /opt/schela/.output/server/index.mjs
+Restart=on-failure
+RestartSec=3
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

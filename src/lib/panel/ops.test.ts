@@ -49,8 +49,8 @@ describe("IP + cron", () => {
 
 describe("backup destinations", () => {
   it("accepts rsync and S3 targets and lists local+remotes together", () => {
-    assert.equal(assertRsyncDest("user@offsite.example:/backups/keel"), "user@offsite.example:/backups/keel");
-    assert.equal(assertS3Bucket("keel-prod-backups"), "keel-prod-backups");
+    assert.equal(assertRsyncDest("user@offsite.example:/backups/schela"), "user@offsite.example:/backups/schela");
+    assert.equal(assertS3Bucket("schela-prod-backups"), "schela-prod-backups");
     assert.throws(() => assertRsyncDest("user@host:/tmp; rm -rf /"), /unsafe/);
     assert.throws(() => assertS3Bucket("no"), /bucket/);
     assert.equal(parseBackupScope("all"), "all");

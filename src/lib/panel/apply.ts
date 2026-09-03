@@ -11,11 +11,13 @@ import {
 import type { LiveMetrics } from "./types";
 
 export function isVpsApply(): boolean {
-  return process.env.KEEL_APPLY === "1";
+  return process.env.SCHELA_APPLY === "1";
 }
 
 function statePath(): string {
-  return process.env.KEEL_STATE ?? "/var/lib/keel/state.json";
+  const fromEnv = process.env.SCHELA_STATE?.trim();
+  if (fromEnv) return fromEnv;
+  return "/var/lib/schela/state.json";
 }
 
 export async function dumpAndApply(sql: Sql): Promise<void> {
@@ -155,7 +157,7 @@ export async function dumpAndApply(sql: Sql): Promise<void> {
         const user =
           kind === "site"
             ? String(row.site_user || "")
-            : `ka_${slug || "app"}`;
+            : `sa_${slug || "app"}`;
         const cwd =
           kind === "site" ? `/home/${user}/www` : `/home/${user}/app`;
         return {
@@ -193,7 +195,7 @@ export async function dumpAndApply(sql: Sql): Promise<void> {
 
   const { spawn } = await import("node:child_process");
   await new Promise<void>((resolve, reject) => {
-    const child = spawn("sudo", ["-n", "/usr/local/sbin/keel-apply"], {
+    const child = spawn("sudo", ["-n", "/usr/local/sbin/schela-apply"], {
       stdio: ["ignore", "pipe", "pipe"],
     });
     let err = "";
@@ -203,7 +205,7 @@ export async function dumpAndApply(sql: Sql): Promise<void> {
     child.on("error", (e) => reject(e));
     child.on("close", (code) => {
       if (code === 0) resolve();
-      else reject(new Error(err.trim() || `keel-apply exited ${code}`));
+      else reject(new Error(err.trim() || `schela-apply exited ${code}`));
     });
   });
 }
@@ -212,7 +214,7 @@ export async function applyAfterChange(sql: Sql): Promise<void> {
   try {
     await dumpAndApply(sql);
   } catch (err) {
-    console.error("[keel] apply failed:", err);
+    console.error("[schela] apply failed:", err);
     throw new Error(
       err instanceof Error ? err.message : "Could not apply this change on the server",
     );
@@ -265,11 +267,11 @@ export async function readHostMetrics(): Promise<LiveMetrics | null> {
       spark: spark.map((n) => Math.round(n * 10) / 10),
     };
   } catch (err) {
-    console.error("[keel] host metrics:", err);
+    console.error("[schela] host metrics:", err);
     return null;
   }
 }
 
 export function publicIp(): string {
-  return process.env.KEEL_PUBLIC_IP?.trim() || "127.0.0.1";
+  return process.env.SCHELA_PUBLIC_IP?.trim() || "127.0.0.1";
 }

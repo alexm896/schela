@@ -14,15 +14,15 @@ async function userCount(): Promise<number> {
 }
 
 async function readBootstrap(): Promise<BootstrapFile | null> {
-  const email = toAuthEmail(process.env.KEEL_ADMIN_EMAIL?.trim() || DEFAULT_ADMIN_EMAIL);
-  const password = process.env.KEEL_ADMIN_PASSWORD?.trim();
+  const email = toAuthEmail(process.env.SCHELA_ADMIN_EMAIL?.trim() || DEFAULT_ADMIN_EMAIL);
+  const password = process.env.SCHELA_ADMIN_PASSWORD?.trim();
   if (email && password) {
     return { email, password, name: "Admin" };
   }
   if (typeof window !== "undefined") return null;
   try {
     const fs = await import("node:fs/promises");
-    const raw = await fs.readFile("/var/lib/keel/bootstrap-admin.json", "utf8");
+    const raw = await fs.readFile("/var/lib/schela/bootstrap-admin.json", "utf8");
     const parsed = JSON.parse(raw) as BootstrapFile;
     if (parsed.password) {
       return {
@@ -40,7 +40,7 @@ async function readBootstrap(): Promise<BootstrapFile | null> {
 async function dropBootstrapFile() {
   try {
     const fs = await import("node:fs/promises");
-    await fs.unlink("/var/lib/keel/bootstrap-admin.json");
+    await fs.unlink("/var/lib/schela/bootstrap-admin.json");
   } catch {
     /* already gone */
   }
@@ -49,11 +49,11 @@ async function dropBootstrapFile() {
 async function stripAdminPasswordFromEnv() {
   try {
     const fs = await import("node:fs/promises");
-    const path = "/var/lib/keel/admin.env";
+    const path = "/var/lib/schela/admin.env";
     const raw = await fs.readFile(path, "utf8");
     const next = raw
       .split("\n")
-      .filter((line) => !line.startsWith("KEEL_ADMIN_PASSWORD="))
+      .filter((line) => !line.startsWith("SCHELA_ADMIN_PASSWORD="))
       .join("\n");
     await fs.writeFile(path, next, { mode: 0o600 });
   } catch {
@@ -80,7 +80,7 @@ export async function bootstrapAdminIfNeeded(): Promise<void> {
       },
     });
   } catch (err) {
-    console.error("[keel] admin bootstrap:", err);
+    console.error("[schela] admin bootstrap:", err);
   }
   await dropBootstrapFile();
   await stripAdminPasswordFromEnv();

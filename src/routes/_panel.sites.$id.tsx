@@ -162,7 +162,7 @@ function SiteDetail() {
                   {site.cert?.status === "live"
                     ? `Let’s Encrypt · ${site.cert.expires || "active"}`
                     : site.cert?.message ||
-                      "DNS must point here, then Keel requests a Let’s Encrypt cert."}
+                      "DNS must point here, then Schela requests a Let’s Encrypt cert."}
                 </p>
                 {site.cert?.status !== "live" ? (
                   <Button

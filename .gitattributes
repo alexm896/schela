@@ -1,9 +1,9 @@
 # Shell and installer helpers must stay LF or bash on Ubuntu/Debian dies.
 *.sh text eol=lf
-installer/keel text eol=lf
-installer/keel-apply text eol=lf
-installer/keel-files text eol=lf
-installer/keel-backup text eol=lf
+installer/schela text eol=lf
+installer/schela-apply text eol=lf
+installer/schela-files text eol=lf
+installer/schela-backup text eol=lf
 installer/templates/sudoers text eol=lf
 installer/test/Dockerfile text eol=lf
 installer/templates/*.conf text eol=lf

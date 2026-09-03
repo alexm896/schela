@@ -1,4 +1,4 @@
-# Keel installer
+# Schela installer
 
 Tiny hosting panel for Ubuntu 22.04/24.04 and Debian 12/13.
 
@@ -7,8 +7,8 @@ Tiny hosting panel for Ubuntu 22.04/24.04 and Debian 12/13.
 On a **fresh VPS as root**:
 
 ```bash
-git clone https://github.com/imariusalin/keel.git
-cd keel
+git clone https://github.com/imariusalin/schela.git
+cd schela
 sudo bash install.sh
 ```
 
@@ -18,7 +18,7 @@ Then open `http://<server-ip>/` and finish hostname, modules, isolation.
 
 ## What happens when you click in the panel
 
-The panel writes `/var/lib/keel/state.json` and runs `sudo keel apply`:
+The panel writes `/var/lib/schela/state.json` and runs `sudo schela apply`:
 
 - **Sites** — system user, home jail, dedicated PHP-FPM pool, nginx vhost, optional Let’s Encrypt
 - **Node apps** — unprivileged systemd unit + reverse proxy
@@ -26,24 +26,24 @@ The panel writes `/var/lib/keel/state.json` and runs `sudo keel apply`:
 - **Mail** — Postfix virtual mailboxes
 - **DNS** — Bind master zones
 
-Managed files live under `/etc/nginx/keel.d`, `/etc/nginx/keel-apps.d`, and `/etc/php/*/fpm/pool.d/keel-*`. Distro defaults are left alone.
+Managed files live under `/etc/nginx/schela.d`, `/etc/nginx/schela-apps.d`, and `/etc/php/*/fpm/pool.d/schela-*`. Distro defaults are left alone.
 
 ## Commands
 
 ```bash
-sudo keel apply          # rewrite the stack from panel state
-sudo keel apply --dry-run
-sudo keel doctor
-sudo keel status
+sudo schela apply          # rewrite the stack from panel state
+sudo schela apply --dry-run
+sudo schela doctor
+sudo schela status
 ```
 
 ## Layout
 
 | Path | Role |
 |---|---|
-| `/opt/keel` | panel code |
-| `/var/lib/keel` | database + state |
-| `/usr/local/sbin/keel-apply` | apply engine |
+| `/opt/schela` | panel code |
+| `/var/lib/schela` | database + state |
+| `/usr/local/sbin/schela-apply` | apply engine |
 | `/home/<site-user>/www` | site files |
 
 Sites never run as root. Each site is its own Unix user.

@@ -1,5 +1,5 @@
-keel ALL=(root) NOPASSWD: /usr/local/sbin/keel-apply
-keel ALL=(root) NOPASSWD: /usr/local/sbin/keel
-keel ALL=(root) NOPASSWD: /usr/local/sbin/keel-files
-keel ALL=(root) NOPASSWD: /usr/local/sbin/keel-backup run *
-keel ALL=(root) NOPASSWD: /usr/local/sbin/keel-backup cron
+schela ALL=(root) NOPASSWD: /usr/local/sbin/schela-apply
+schela ALL=(root) NOPASSWD: /usr/local/sbin/schela
+schela ALL=(root) NOPASSWD: /usr/local/sbin/schela-files
+schela ALL=(root) NOPASSWD: /usr/local/sbin/schela-backup run *
+schela ALL=(root) NOPASSWD: /usr/local/sbin/schela-backup cron

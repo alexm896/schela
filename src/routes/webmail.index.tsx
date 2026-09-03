@@ -1,7 +1,7 @@
 import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
 import { useState, type FormEvent } from "react";
 import { toast } from "sonner";
-import { KeelMark } from "@/components/keel-mark";
+import { SchelaMark } from "@/components/schela-mark";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -44,8 +44,8 @@ function WebmailLogin() {
     <main className="grid min-h-dvh place-items-center bg-background px-4">
       <div className="w-full max-w-sm">
         <div className="mb-8 flex items-center gap-2.5">
-          <KeelMark className="size-8" />
-          <span className="text-lg font-semibold tracking-tight">Keel webmail</span>
+          <SchelaMark className="size-8" />
+          <span className="text-lg font-semibold tracking-tight">Schela webmail</span>
         </div>
         <h1 className="text-2xl font-semibold tracking-tight">Mailbox sign-in</h1>
         <p className="mt-2 text-sm text-muted-foreground">

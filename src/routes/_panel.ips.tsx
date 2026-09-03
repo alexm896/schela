@@ -174,7 +174,7 @@ function IpsPage() {
           <DialogHeader>
             <DialogTitle>Add IP</DialogTitle>
             <DialogDescription>
-              The address must already be configured on a NIC. Keel binds the vhost and the DNS
+              The address must already be configured on a NIC. Schela binds the vhost and the DNS
               A record; it does not talk to your cloud API.
             </DialogDescription>
           </DialogHeader>

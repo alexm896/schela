@@ -52,7 +52,7 @@ export type {
 } from "./file-types.ts";
 
 function isVpsApply(): boolean {
-  return process.env.KEEL_APPLY === "1";
+  return process.env.SCHELA_APPLY === "1";
 }
 
 function isInside(root: string, target: string): boolean {
@@ -75,9 +75,9 @@ export function joinJail(rootAbs: string, rel: string): string {
 }
 
 export function sandboxRoot(): string {
-  const env = process.env.KEEL_FILES_ROOT?.trim();
+  const env = process.env.SCHELA_FILES_ROOT?.trim();
   if (env) return path.resolve(env);
-  return path.join(tmpdir(), "keel-files");
+  return path.join(tmpdir(), "schela-files");
 }
 
 export function physicalFromVirt(virtRoot: string): string {
@@ -384,7 +384,7 @@ async function runHelper(req: HelperRequest): Promise<Record<string, unknown>> {
   }
   const payload = JSON.stringify(req);
   return new Promise((resolve, reject) => {
-    const child = spawn("sudo", ["-n", "/usr/local/sbin/keel-files"], {
+    const child = spawn("sudo", ["-n", "/usr/local/sbin/schela-files"], {
       stdio: ["pipe", "pipe", "pipe"],
     });
     let out = "";
@@ -408,14 +408,14 @@ async function runHelper(req: HelperRequest): Promise<Record<string, unknown>> {
     child.on("close", (code) => {
       clearTimeout(timer);
       if (!out.trim()) {
-        reject(new Error(err.trim() || `keel-files exited ${code}`));
+        reject(new Error(err.trim() || `schela-files exited ${code}`));
         return;
       }
       let parsed: Record<string, unknown>;
       try {
         parsed = JSON.parse(out) as Record<string, unknown>;
       } catch {
-        reject(new Error(err.trim() || "keel-files returned invalid JSON"));
+        reject(new Error(err.trim() || "schela-files returned invalid JSON"));
         return;
       }
       if (parsed.ok === false) {
@@ -423,7 +423,7 @@ async function runHelper(req: HelperRequest): Promise<Record<string, unknown>> {
         return;
       }
       if (code !== 0) {
-        reject(new Error(err.trim() || String(parsed.error || `keel-files exited ${code}`)));
+        reject(new Error(err.trim() || String(parsed.error || `schela-files exited ${code}`)));
         return;
       }
       resolve(parsed);

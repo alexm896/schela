@@ -85,7 +85,7 @@ function CronPage() {
       <PageHeader
         kicker="Schedule"
         title="Cron jobs"
-        description="Jobs run as the site or app user, in that account’s home directory. Standard five-field cron, written to /etc/cron.d/keel-jobs."
+        description="Jobs run as the site or app user, in that account’s home directory. Standard five-field cron, written to /etc/cron.d/schela-jobs."
         action={
           <Button onClick={() => setOpen(true)} disabled={sites.length + apps.length === 0}>
             <Plus className="size-4" />

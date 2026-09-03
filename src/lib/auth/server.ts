@@ -117,19 +117,19 @@ function vpsPublicOrigins(): string[] {
     out.push(`http://${v}`, `https://${v}`);
   };
   add(env("BETTER_AUTH_URL"));
-  add(env("KEEL_PUBLIC_IP"));
-  add(env("KEEL_HOSTNAME"));
+  add(env("SCHELA_PUBLIC_IP"));
+  add(env("SCHELA_HOSTNAME"));
   return [...new Set(out)];
 }
 
 const vpsOrigins = vpsPublicOrigins();
-const vpsMode = env("KEEL_VPS") === "1" || env("KEEL_APPLY") === "1";
+const vpsMode = env("SCHELA_VPS") === "1" || env("SCHELA_APPLY") === "1";
 const explicitHttps = (explicitBaseURL ?? "").startsWith("https:");
 // `__Host-` + Secure cookies only work on HTTPS or localhost. A VPS opened at
 // http://1.2.3.4 must use a normal cookie or the browser drops the session.
 const vpsHttpCookies = vpsMode && !explicitHttps;
 
-const extraHosts = [env("KEEL_PUBLIC_IP"), env("KEEL_HOSTNAME")].filter(
+const extraHosts = [env("SCHELA_PUBLIC_IP"), env("SCHELA_HOSTNAME")].filter(
   (h): h is string => Boolean(h),
 );
 
@@ -184,7 +184,7 @@ const database = databaseUrl
 
 /** Session token cookie name — also read by the live-preview popup completion page. */
 export const SESSION_TOKEN_COOKIE = vpsHttpCookies
-  ? "keel.session_token"
+  ? "schela.session_token"
   : "__Host-grok-auth.session_token";
 
 // Built separately so the `betterAuth({...})` call stays easy to edit without
@@ -266,10 +266,10 @@ export const auth = betterAuth({
       : { secure: true, sameSite: "lax", path: "/" },
     cookies: vpsHttpCookies
       ? {
-          session_token: { name: "keel.session_token" },
-          session_data: { name: "keel.session_data" },
-          account_data: { name: "keel.account_data" },
-          dont_remember: { name: "keel.dont_remember" },
+          session_token: { name: "schela.session_token" },
+          session_data: { name: "schela.session_data" },
+          account_data: { name: "schela.account_data" },
+          dont_remember: { name: "schela.dont_remember" },
         }
       : {
           session_token: { name: SESSION_TOKEN_COOKIE },

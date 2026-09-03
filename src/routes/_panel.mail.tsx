@@ -206,7 +206,7 @@ function MailPage() {
       ) : (
         <Card className="mb-6">
           <CardContent className="p-5 text-sm text-muted-foreground">
-            Add a mailbox and Keel will detect the domain, then write the mail DNS records
+            Add a mailbox and Schela will detect the domain, then write the mail DNS records
             automatically.
           </CardContent>
         </Card>

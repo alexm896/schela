@@ -103,7 +103,7 @@ function DnsPage() {
       <PageHeader
         kicker="DNS"
         title="Zones"
-        description="Authoritative records for sites on this server. Nameservers ns1/ns2.keel.local."
+        description="Authoritative records for sites on this server. Nameservers ns1/ns2.schela.local."
         action={
           <div className="flex gap-2">
             <Button variant="secondary" onClick={() => setZoneOpen(true)}>

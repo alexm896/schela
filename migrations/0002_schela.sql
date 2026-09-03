@@ -1,8 +1,8 @@
--- Keel hosting panel schema. Unowned rows (auth off).
+-- Schela hosting panel schema. Unowned rows (auth off).
 
 create table if not exists panel_settings (
   id integer primary key check (id = 1),
-  hostname text not null default 'panel.keel.local',
+  hostname text not null default 'panel.schela.local',
   isolation boolean not null default true,
   setup_complete boolean not null default false,
   ssh_port integer not null default 22,

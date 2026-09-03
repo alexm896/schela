@@ -1,6 +1,6 @@
 import { cn } from "@/lib/utils";
 
-export function KeelMark({ className }: { className?: string }) {
+export function SchelaMark({ className }: { className?: string }) {
   return (
     <svg
       viewBox="0 0 32 32"
