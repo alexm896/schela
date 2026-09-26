@@ -1,5 +1,6 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { getCookie, getRequest, setCookie } from "@tanstack/react-start/server";
+import { webmailCookieSecure } from "./cookie.ts";
 
 const COOKIE = "schela_webmail";
 const MAX_AGE = 8 * 60 * 60;
@@ -28,8 +29,10 @@ function sign(id: string): string {
 
 function cookieSecure(): boolean {
   const req = getRequest();
-  const proto = req?.headers.get("x-forwarded-proto") || "";
-  return proto === "https" || process.env.SCHELA_APPLY === "1";
+  return webmailCookieSecure({
+    forwardedProto: req?.headers.get("x-forwarded-proto") ?? null,
+    url: req?.url ?? "",
+  });
 }
 
 function prune() {

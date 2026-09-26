@@ -322,6 +322,13 @@ apply_mail() {
   if ! id -u vmail >/dev/null 2>&1; then
     useradd --system --home /var/mail/schela --shell "$(nologin_shell)" vmail
   fi
+  vuid="$(id -u vmail)"
+  vgid="$(id -g vmail)"
+  dove_ver="$(dovecot --version 2>/dev/null | awk '{print $1}' || true)"
+  case "$dove_ver" in
+    2.[4-9]*|[3-9]*) dove24=1 ;;
+    *) dove24=0 ;;
+  esac
   : >/var/lib/schela/mail/vmailbox
   : >/var/lib/schela/mail/vdomains
   : >/var/lib/schela/mail/users
@@ -338,10 +345,20 @@ apply_mail() {
     localpart="${addr%@*}"
     printf '%s %s/\n' "$addr" "$domain/$localpart" >>/var/lib/schela/mail/vmailbox
     grep -qxF "$domain" /var/lib/schela/mail/vdomains 2>/dev/null || echo "$domain" >>/var/lib/schela/mail/vdomains
-    mkdir -p "/var/mail/schela/${domain}/${localpart}"
+    mkdir -p "/var/mail/schela/${domain}/${localpart}/cur" \
+             "/var/mail/schela/${domain}/${localpart}/new" \
+             "/var/mail/schela/${domain}/${localpart}/tmp"
     if [[ "$hash" == \{SSHA512\}* ]]; then
-      printf '%s:%s:vmail:vmail::/var/mail/schela/%s/%s::userdb_quota_rule=*:storage=%sM\n' \
-        "$addr" "$hash" "$domain" "$localpart" "$quota" >>/var/lib/schela/mail/users
+      # Numeric uid/gid. A name here is dropped when NSS lookup fails at parse time,
+      # and then IMAP never sees the mailbox.
+      if [ "$dove24" -eq 1 ]; then
+        extra="userdb_quota_storage_size=${quota}M"
+      else
+        extra="userdb_quota_rule=*:storage=${quota}M"
+      fi
+      printf '%s:%s:%s:%s::/var/mail/schela/%s/%s::%s\n' \
+        "$addr" "$hash" "$vuid" "$vgid" "$domain" "$localpart" "$extra" \
+        >>/var/lib/schela/mail/users
     fi
     mkdir -p /var/lib/schela/dkim
     if [ ! -f "/var/lib/schela/dkim/${domain}.private" ] && command -v opendkim-genkey >/dev/null 2>&1; then
@@ -354,8 +371,6 @@ apply_mail() {
   done < <(jq -c '.mailboxes // [] | .[]' "$STATE")
   chown -R vmail:vmail /var/mail/schela
   postmap /var/lib/schela/mail/vmailbox 2>/dev/null || true
-  vuid="$(id -u vmail)"
-  vgid="$(id -g vmail)"
   postconf -e "virtual_mailbox_base = /var/mail/schela"
   postconf -e "virtual_mailbox_maps = hash:/var/lib/schela/mail/vmailbox"
   postconf -e "virtual_mailbox_domains = /var/lib/schela/mail/vdomains"
@@ -363,13 +378,39 @@ apply_mail() {
   postconf -e "virtual_uid_maps = static:${vuid}"
   postconf -e "virtual_gid_maps = static:${vgid}"
   if [ -d /etc/dovecot/conf.d ]; then
-    cat >/etc/dovecot/conf.d/99-schela.conf <<'DOVE'
+    if [ "$dove24" -eq 1 ]; then
+      cat >/etc/dovecot/conf.d/99-schela.conf <<DOVE
+# Managed by schela-apply (Dovecot 2.4)
+mail_driver = maildir
+mail_path = /var/mail/schela/%{user | domain}/%{user | username}
+mail_uid = vmail
+mail_gid = vmail
+first_valid_uid = ${vuid}
+auth_allow_cleartext = yes
+auth_mechanisms = plain login
+passdb passwd-file {
+  passwd_file_path = /var/lib/schela/mail/users
+}
+userdb passwd-file {
+  passwd_file_path = /var/lib/schela/mail/users
+}
+service auth {
+  user = root
+}
+service imap-login {
+  inet_listener imap {
+    port = 143
+  }
+}
+DOVE
+    else
+      cat >/etc/dovecot/conf.d/99-schela.conf <<DOVE
 # Managed by schela-apply
 protocols = imap
 mail_location = maildir:/var/mail/schela/%d/%n
 mail_uid = vmail
 mail_gid = vmail
-first_valid_uid = 100
+first_valid_uid = ${vuid}
 passdb {
   driver = passwd-file
   args = scheme=SSHA512 username_format=%u /var/lib/schela/mail/users
@@ -378,13 +419,27 @@ userdb {
   driver = passwd-file
   args = username_format=%u /var/lib/schela/mail/users
 }
-ssl = yes
 disable_plaintext_auth = no
 auth_mechanisms = plain login
+service auth {
+  user = root
+}
+service imap-login {
+  inet_listener imap {
+    port = 143
+  }
+}
 DOVE
+    fi
     chmod 644 /etc/dovecot/conf.d/99-schela.conf
+    if getent group dovecot >/dev/null 2>&1; then
+      chown root:dovecot /var/lib/schela/mail/users
+    else
+      chown root:root /var/lib/schela/mail/users
+    fi
     chmod 640 /var/lib/schela/mail/users
-    systemctl reload dovecot >/dev/null 2>&1 || systemctl restart dovecot >/dev/null 2>&1 || true
+    doveconf -n >/dev/null
+    systemctl restart dovecot
   fi
   systemctl reload postfix >/dev/null 2>&1 || true
 }

@@ -8,6 +8,18 @@ REPO="$(cd "$HERE/.." && pwd)"
 VERSION="$(cat "$HERE/VERSION" 2>/dev/null || echo 0.1.0)"
 export DEBIAN_FRONTEND=noninteractive
 
+read -r -d '' SCHELA_LOGO <<'LOGO' || true
+
+          │ │ │ │ │ │
+    ══════╪═╪═╪═╪═╪═╪══════
+    ╔═╗ ╔═╗ ╦ ╦ ╔═╗ ╦   ╔═╗
+    ╚═╗ ║   ╠═╣ ║╣  ║   ╠═╣
+    ╚═╝ ╚═╝ ╩ ╩ ╚═╝ ╩═╝ ╩ ╩
+    ══════╪═╪═╪═╪═╪═╪══════
+          │ │ │ │ │ │
+         hosting panel
+LOGO
+
 SCHELA_LOG="${SCHELA_LOG:-/var/log/schela-install.log}"
 SCHELA_PROGRESS="${SCHELA_PROGRESS:-/run/schela-install.progress}"
 STEP=0
@@ -61,16 +73,7 @@ if [ "${SCHELA_INNER:-0}" != "1" ] && [ "${SCHELA_VERBOSE:-0}" != "1" ]; then
       i=$((i + 1))
     done
     printf '\033[2J\033[H'
-    cat <<'LOGO'
-
-    _  __          _
-   | |/ /___  ___ | |
-   | ' // _ \/ _ \| |
-   | . \  __/  __/ | |
-   |_|\_\___|\___|_|_|
-          hosting panel
-
-LOGO
+    printf '%s\n' "$SCHELA_LOGO"
     printf '   %s  %s%%\n' "$bar" "$pct"
     printf '   %s\n' "$msg"
     sleep 0.4
@@ -81,15 +84,7 @@ LOGO
   set -e
   tput cnorm 2>/dev/null || true
   printf '\033[2J\033[H'
-  cat <<'LOGO'
-
-    _  __          _
-   | |/ /___  ___ | |
-   | ' // _ \/ _ \| |
-   | . \  __/  __/ | |
-   |_|\_\___|\___|_|_|
-
-LOGO
+  printf '%s\n' "$SCHELA_LOGO"
   if [ "$code" -ne 0 ]; then
     printf '   Install failed.\n   Log: %s\n\n' "$SCHELA_LOG"
     tail -n 12 "$SCHELA_LOG" | sed 's/^/   /'

@@ -7,6 +7,7 @@ import {
   parseAddressList,
   parseHeaders,
 } from "./rfc822.ts";
+import { webmailCookieSecure } from "./cookie.ts";
 import { isMailAddress, assertImapFolder, quoteImap } from "./safe.ts";
 import { escapeText, sanitizeHtml } from "./sanitize.ts";
 
@@ -38,6 +39,35 @@ describe("webmail address and folder guards", () => {
     assert.throws(() => assertImapFolder('INBOX"\r\nA1 LOGOUT'), /Invalid folder/);
     assert.match(quoteImap('a"b'), /\\"/);
     assert.throws(() => quoteImap("a\nb"), /IMAP/);
+  });
+});
+
+describe("webmail session cookie", () => {
+  it("stays readable on the HTTP panel and Secure only on HTTPS", () => {
+    assert.equal(
+      webmailCookieSecure({ forwardedProto: "http", url: "http://203.0.113.10/" }),
+      false,
+    );
+    assert.equal(
+      webmailCookieSecure({ forwardedProto: "HTTP", url: "https://ignored.example/" }),
+      false,
+    );
+    assert.equal(
+      webmailCookieSecure({ forwardedProto: "https", url: "http://203.0.113.10/" }),
+      true,
+    );
+    assert.equal(
+      webmailCookieSecure({ forwardedProto: "https, http", url: "http://203.0.113.10/" }),
+      true,
+    );
+    assert.equal(
+      webmailCookieSecure({ forwardedProto: null, url: "https://panel.example/webmail" }),
+      true,
+    );
+    assert.equal(
+      webmailCookieSecure({ forwardedProto: null, url: "http://127.0.0.1:9090/" }),
+      false,
+    );
   });
 });
 

@@ -99,10 +99,17 @@ export const webmailLogin = createServerFn({ method: "POST" })
     await hitLogin(address);
     await requireBox(address, data.password);
     if (vps()) {
-      await withImap(IMAP_HOST, IMAP_PORT, address, data.password, async (c) => {
-        await c.ensureFolder("Sent");
-        await c.ensureFolder("Trash");
-      });
+      try {
+        await withImap(IMAP_HOST, IMAP_PORT, address, data.password, async (c) => {
+          await c.ensureFolder("Sent");
+          await c.ensureFolder("Trash");
+        });
+      } catch (err) {
+        const detail = err instanceof Error ? err.message : "mail server error";
+        throw new Error(
+          `Mailbox password matches, but the mail server refused the login (${detail}).`,
+        );
+      }
     }
     await writeWebmailSession({ addr: address, pw: data.password });
     return { address };
