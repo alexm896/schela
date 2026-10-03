@@ -50,6 +50,98 @@ else
   pass "non-jail root rejected (nonzero)"
 fi
 
+expect_reject() {
+  # $1 = label, $2 = JSON request. Passes when schela-files refuses the op.
+  if printf '%s' "$2" | python3 "$INS/schela-files" >/tmp/schela-files.out 2>/tmp/schela-files.err; then
+    python3 -c 'import json; d=json.load(open("/tmp/schela-files.out")); raise SystemExit(0 if d.get("ok") is False else 1)' \
+      || fail "$1"
+  fi
+  pass "$1 rejected"
+}
+
+echo "== schela-files symlink escapes"
+printf 'root-owned\n' >/etc/schela-jail-target
+mkdir -p /etc/schela-jail-dir
+printf 'root-owned\n' >/etc/schela-jail-dir/target
+printf 'root-owned\n' >/etc/schela-jail-dir/victim
+ln -sfn /etc/schela-jail-target /home/s_demo/www/link.txt
+ln -sfn /etc /home/s_demo/www/etcdir
+chown -h s_demo:s_demo /home/s_demo/www/link.txt /home/s_demo/www/etcdir
+
+expect_reject "write through file symlink" \
+  '{"op":"write","root":"/home/s_demo/www","rel":"/link.txt","content":"pwned"}'
+expect_reject "write through directory symlink" \
+  '{"op":"write","root":"/home/s_demo/www","rel":"/etcdir/schela-jail-dir/target","content":"pwned"}'
+expect_reject "create through directory symlink" \
+  '{"op":"create","root":"/home/s_demo/www","rel":"/etcdir/schela-jail-dir/new"}'
+expect_reject "chmod through directory symlink" \
+  '{"op":"chmod","root":"/home/s_demo/www","rel":"/etcdir/schela-jail-dir/target","mode":"0666"}'
+expect_reject "read through directory symlink" \
+  '{"op":"read","root":"/home/s_demo/www","rel":"/etcdir/shadow"}'
+
+expect_reject "copy out through directory symlink" \
+  '{"op":"copy","root":"/home/s_demo/www","rel":"/etcdir/shadow","to":"/shadow-copy"}'
+expect_reject "rename through directory symlink" \
+  '{"op":"rename","root":"/home/s_demo/www","rel":"/etcdir/schela-jail-dir/target","to":"/stolen"}'
+expect_reject "delete through directory symlink" \
+  '{"op":"delete","root":"/home/s_demo/www","rel":"/etcdir/schela-jail-dir/victim"}'
+expect_reject "list through directory symlink" \
+  '{"op":"list","root":"/home/s_demo/www","rel":"/etcdir/schela-jail-dir"}'
+expect_reject "mkdir through directory symlink" \
+  '{"op":"mkdir","root":"/home/s_demo/www","rel":"/etcdir/schela-jail-dir/sub"}'
+expect_reject "read world-readable file through directory symlink" \
+  '{"op":"read","root":"/home/s_demo/www","rel":"/etcdir/passwd"}'
+
+# Proves the helper runs as the site user: a root-only file inside the jail is off limits.
+printf 'root-only\n' >/home/s_demo/www/root-only.txt
+chown root:root /home/s_demo/www/root-only.txt
+chmod 600 /home/s_demo/www/root-only.txt
+expect_reject "root-only file inside the jail (privilege drop)" \
+  '{"op":"read","root":"/home/s_demo/www","rel":"/root-only.txt"}'
+grep -q "Permission denied" /tmp/schela-files.out || fail "root-only read was refused for the wrong reason"
+pass "refusal came from the kernel"
+[ "$(cat /etc/schela-jail-target)" = "root-owned" ] || fail "file symlink target was overwritten"
+[ "$(cat /etc/schela-jail-dir/target)" = "root-owned" ] || fail "directory symlink target was overwritten"
+[ "$(stat -c %U:%a /etc/schela-jail-dir/target)" = "root:644" ] || fail "directory symlink target changed owner/mode"
+[ -e /etc/schela-jail-dir/victim ] || fail "file deleted outside the jail"
+[ ! -e /etc/schela-jail-dir/new ] && [ ! -e /etc/schela-jail-dir/sub ] || fail "file created outside the jail"
+[ ! -e /home/s_demo/www/shadow-copy ] && [ ! -e /home/s_demo/www/stolen ] || fail "file pulled into the jail"
+pass "files outside the jail untouched"
+
+out="$(printf '%s' '{"op":"write","root":"/home/s_demo/www","rel":"/css/site.css","content":"body{}"}' | python3 "$INS/schela-files")"
+echo "$out" | python3 -c 'import json,sys; assert json.load(sys.stdin).get("ok") is True'
+[ "$(cat /home/s_demo/www/css/site.css)" = "body{}" ] || fail "normal write lost content"
+[ "$(stat -c %U:%a /home/s_demo/www/css/site.css)" = "s_demo:644" ] || fail "normal write has wrong owner/mode"
+pass "normal write inside the jail"
+
+echo "== schela-files normal operations (as the site user)"
+F() { printf '%s' "$1" | python3 "$INS/schela-files"; }
+ok() { python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("ok") is True, d' || fail "$1"; pass "$1"; }
+mkdir -p /home/s_demo/www/releases/1
+printf 'v1\n' >/home/s_demo/www/releases/1/index.php
+ln -sfn releases/1 /home/s_demo/www/current
+chown -R -h s_demo:s_demo /home/s_demo/www
+F '{"op":"read","root":"/home/s_demo/www","rel":"/current/index.php"}' | ok "read through in-jail symlink"
+F '{"op":"mkdir","root":"/home/s_demo/www","rel":"/assets"}' | ok "mkdir"
+F '{"op":"create","root":"/home/s_demo/www","rel":"/assets/a.txt"}' | ok "create"
+F '{"op":"write","root":"/home/s_demo/www","rel":"/assets/a.txt","content":"aGVsbG8=","encoding":"base64"}' | ok "write base64"
+F '{"op":"read","root":"/home/s_demo/www","rel":"/assets/a.txt","binary":true}' \
+  | python3 -c 'import json,sys,base64; d=json.load(sys.stdin); assert base64.b64decode(d["content"])==b"hello", d' || fail "read binary"
+pass "read binary"
+F '{"op":"chmod","root":"/home/s_demo/www","rel":"/assets/a.txt","mode":"0600"}' | ok "chmod"
+[ "$(stat -c %a /home/s_demo/www/assets/a.txt)" = "600" ] || fail "chmod not applied"
+F '{"op":"copy","root":"/home/s_demo/www","rel":"/assets","to":"/assets2"}' | ok "copy directory"
+F '{"op":"copy","root":"/home/s_demo/www","rel":"/assets/a.txt","to":"/b.txt"}' | ok "copy file"
+F '{"op":"rename","root":"/home/s_demo/www","rel":"/b.txt","to":"/assets2/c.txt"}' | ok "rename"
+F '{"op":"list","root":"/home/s_demo/www","rel":"/assets2"}' \
+  | python3 -c 'import json,sys; n={e["name"] for e in json.load(sys.stdin)["entries"]}; assert n=={"a.txt","c.txt"}, n' || fail "list after copy/rename"
+pass "list after copy/rename"
+F '{"op":"delete","root":"/home/s_demo/www","rel":"/assets2"}' | ok "delete directory tree"
+[ ! -e /home/s_demo/www/assets2 ] || fail "delete left files behind"
+bad="$(find /home/s_demo -not -user s_demo -not -path /home/s_demo/www/root-only.txt)"
+[ -z "$bad" ] || fail "files not owned by the site user: $bad"
+pass "everything created is owned by the site user"
+
 echo "== schela-backup path jail"
 mkdir -p /var/lib/schela /tmp/schela-b
 export SCHELA_STATE=/tmp/schela-state.json

@@ -2,7 +2,9 @@
 """Privileged file ops for the Schela panel. JSON on stdin, JSON on stdout.
 
 The panel user `schela` may sudo this binary with no password. Every path is
-restricted to /home/<site-or-app-user>/(www|app). New files are chowned to that user.
+restricted to /home/<site-or-app-user>/(www|app). Once the jail is validated the
+process drops to that user, so a symlink planted by site code cannot make a file
+operation touch anything the site user could not touch on its own.
 """
 from __future__ import annotations
 
@@ -133,6 +135,16 @@ def check_root(root: str) -> tuple[str, str]:
     return real, user
 
 
+def drop_to(user: str) -> None:
+    pw = pwd.getpwnam(user)
+    if pw.pw_uid == 0:
+        raise ValueError("Refusing to run file operations as root")
+    os.initgroups(user, pw.pw_gid)
+    os.setresgid(pw.pw_gid, pw.pw_gid, pw.pw_gid)
+    os.setresuid(pw.pw_uid, pw.pw_uid, pw.pw_uid)
+    os.umask(0o022)
+
+
 def inside(jail: str, target: str) -> bool:
     jail = os.path.realpath(jail)
     target = os.path.abspath(target)
@@ -163,6 +175,8 @@ def iso(mtime: float) -> str:
 
 def assert_safe(jail: str, abs_path: str, must_exist: bool = False) -> os.stat_result | None:
     if not inside(jail, abs_path):
+        raise ValueError("That path is outside this account")
+    if abs_path != os.path.realpath(jail) and not inside(jail, os.path.realpath(os.path.dirname(abs_path))):
         raise ValueError("That path is outside this account")
     try:
         st = os.lstat(abs_path)
@@ -297,6 +311,7 @@ def op_write(jail: str, rel: str, content: str, encoding: str, user: str) -> dic
 
 def op_create(jail: str, rel: str, user: str) -> dict[str, Any]:
     abs_path = join_jail(jail, rel)
+    assert_safe(jail, os.path.dirname(abs_path), must_exist=True)
     flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
     fd = os.open(abs_path, flags, 0o644)
     os.close(fd)
@@ -306,6 +321,7 @@ def op_create(jail: str, rel: str, user: str) -> dict[str, Any]:
 
 def op_mkdir(jail: str, rel: str, user: str) -> dict[str, Any]:
     abs_path = join_jail(jail, rel)
+    assert_safe(jail, os.path.dirname(abs_path), must_exist=True)
     os.mkdir(abs_path, 0o755)
     chown_path(abs_path, user)
     return {"ok": True, "path": virt_norm(rel)}
@@ -381,6 +397,8 @@ def main() -> None:
         root = str(req.get("root") or "")
         rel = str(req.get("rel") or "/")
         jail, user = check_root(root)
+        if os.geteuid() == 0:
+            drop_to(user)
         if op == "list":
             out = op_list(jail, rel)
         elif op == "read":
