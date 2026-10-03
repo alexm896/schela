@@ -17,6 +17,7 @@ import {
 } from "./files";
 import { virtJoin, virtNormalize, virtParent, type FileTarget } from "./file-types";
 import { mapApp, mapSite } from "./map";
+import { siteFilesRoot } from "./site-root";
 
 const targetSchema = z.object({
   kind: z.enum(["site", "app"]),
@@ -48,9 +49,7 @@ async function resolveTarget(
     `;
     if (!rows[0]) throw new Error("Site not found");
     const site = mapSite(rows[0]);
-    const virtRoot = site.root.startsWith("/home/")
-      ? site.root
-      : `/home/${site.systemUser}/www`;
+    const virtRoot = siteFilesRoot(site.systemUser);
     return {
       virtRoot,
       seed: { kind: "site", domain: site.domain },
@@ -102,9 +101,7 @@ export const listFileTargets = createServerFn({ method: "GET" })
         label: site.domain,
         domain: site.domain,
         user: site.systemUser,
-        virtRoot: site.root.startsWith("/home/")
-          ? site.root
-          : `/home/${site.systemUser}/www`,
+        virtRoot: siteFilesRoot(site.systemUser),
       })),
       ...apps.map((app) => ({
         kind: "app" as const,

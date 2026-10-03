@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { normalizeWebRoot, siteRootFor, webRootFromRoot } from "./site-root.ts";
+import { normalizeWebRoot, siteFilesRoot, siteRootFor, webRootFromRoot } from "./site-root.ts";
 
 describe("document root", () => {
   it("normalizes relative folders under www", () => {
@@ -15,6 +15,10 @@ describe("document root", () => {
     for (const bad of ["..", "../x", "public/..", ".git", "a/.env", "a b", "a;b", "a\nb", "a/b/c/d/e", "pub$lic"]) {
       assert.throws(() => normalizeWebRoot(bad), Error, bad);
     }
+  });
+
+  it("keeps the files root at www whatever the document root is", () => {
+    assert.equal(siteFilesRoot("s_app"), "/home/s_app/www");
   });
 
   it("maps between the stored root and the relative folder", () => {

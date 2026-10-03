@@ -19,6 +19,11 @@ export function normalizeWebRoot(raw: string): string {
   return parts.join("/");
 }
 
+/** Where the site's files live: the file manager and workers use this, not the document root. */
+export function siteFilesRoot(systemUser: string): string {
+  return `/home/${systemUser}/www`;
+}
+
 export function siteRootFor(systemUser: string, webRoot: string): string {
   const base = `/home/${systemUser}/www`;
   return webRoot ? `${base}/${webRoot}` : base;
