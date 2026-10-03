@@ -200,18 +200,35 @@ export const sessionUser = createServerFn({ method: "GET" }).handler(async () =>
   return user ? { id: user.id, email: user.email } : null;
 });
 
-export const getPanelState = createServerFn({ method: "GET" }).handler(
-  async (): Promise<PanelState> => {
+/**
+ * The only panel data shown before sign-in: the hostname on the login page.
+ * Also runs first-boot setup and creates the bootstrap admin, which must
+ * happen before anyone can sign in.
+ */
+export const getLoginInfo = createServerFn({ method: "GET" }).handler(
+  async (): Promise<{ hostname: string }> => {
     const sql = await getSql();
     await ensureSetup(sql);
     await bootstrapAdminIfNeeded();
     const settings = await readSettings(sql);
-    const modules = (await sql<Record<string, unknown>>`
-      select * from modules order by sort_order
-    `).map(mapModule);
-    return { settings, modules };
+    return { hostname: settings.hostname };
   },
 );
+
+export const getPanelState = createServerFn({ method: "GET" })
+  .middleware([authMiddleware])
+  .handler(
+    async (): Promise<PanelState> => {
+      const sql = await getSql();
+      await ensureSetup(sql);
+      await bootstrapAdminIfNeeded();
+      const settings = await readSettings(sql);
+      const modules = (await sql<Record<string, unknown>>`
+        select * from modules order by sort_order
+      `).map(mapModule);
+      return { settings, modules };
+    },
+  );
 
 const setupSchema = z.object({
   hostname: z.string().min(1).max(120),
@@ -247,61 +264,65 @@ export const completeSetup = createServerFn({ method: "POST" })
     return { settings, modules };
   });
 
-export const getDashboard = createServerFn({ method: "GET" }).handler(
-  async (): Promise<DashboardData> => {
+export const getDashboard = createServerFn({ method: "GET" })
+  .middleware([authMiddleware])
+  .handler(
+    async (): Promise<DashboardData> => {
+      const sql = await getSql();
+      await ensureSetup(sql);
+      const settings = await readSettings(sql);
+      const modules = (await sql<Record<string, unknown>>`
+        select * from modules order by sort_order
+      `).map(mapModule);
+      const sites = (await sql<Record<string, unknown>>`
+        select sites.*, ip_addresses.address as ip_address
+        from sites
+        left join ip_addresses on ip_addresses.id = sites.ip_id
+        order by sites.created_at desc
+      `).map(mapSite);
+      const apps = (await sql<Record<string, unknown>>`
+        select node_apps.*, ip_addresses.address as ip_address
+        from node_apps
+        left join ip_addresses on ip_addresses.id = node_apps.ip_id
+        order by node_apps.created_at desc
+      `).map(mapApp);
+      const activity = (await sql<Record<string, unknown>>`
+        select * from activity order by created_at desc limit 8
+      `).map(mapActivity);
+      const siteCount = await sql<{ n: number }>`select count(*)::int as n from sites`;
+      const appCount = await sql<{ n: number }>`select count(*)::int as n from node_apps`;
+      const mailCount = await sql<{ n: number }>`select count(*)::int as n from mailboxes`;
+      const zoneCount = await sql<{ n: number }>`select count(*)::int as n from dns_zones`;
+      const fwCount = await sql<{ n: number }>`select count(*)::int as n from firewall_rules`;
+      return {
+        settings,
+        modules,
+        metrics: await liveMetrics(),
+        counts: {
+          sites: siteCount[0]?.n ?? 0,
+          apps: appCount[0]?.n ?? 0,
+          mailboxes: mailCount[0]?.n ?? 0,
+          zones: zoneCount[0]?.n ?? 0,
+          firewall: fwCount[0]?.n ?? 0,
+        },
+        sites,
+        apps,
+        activity,
+      };
+    },
+  );
+
+export const listSites = createServerFn({ method: "GET" })
+  .middleware([authMiddleware])
+  .handler(async () => {
     const sql = await getSql();
-    await ensureSetup(sql);
-    const settings = await readSettings(sql);
-    const modules = (await sql<Record<string, unknown>>`
-      select * from modules order by sort_order
-    `).map(mapModule);
-    const sites = (await sql<Record<string, unknown>>`
+    return (await sql<Record<string, unknown>>`
       select sites.*, ip_addresses.address as ip_address
       from sites
       left join ip_addresses on ip_addresses.id = sites.ip_id
-      order by sites.created_at desc
+      order by domain
     `).map(mapSite);
-    const apps = (await sql<Record<string, unknown>>`
-      select node_apps.*, ip_addresses.address as ip_address
-      from node_apps
-      left join ip_addresses on ip_addresses.id = node_apps.ip_id
-      order by node_apps.created_at desc
-    `).map(mapApp);
-    const activity = (await sql<Record<string, unknown>>`
-      select * from activity order by created_at desc limit 8
-    `).map(mapActivity);
-    const siteCount = await sql<{ n: number }>`select count(*)::int as n from sites`;
-    const appCount = await sql<{ n: number }>`select count(*)::int as n from node_apps`;
-    const mailCount = await sql<{ n: number }>`select count(*)::int as n from mailboxes`;
-    const zoneCount = await sql<{ n: number }>`select count(*)::int as n from dns_zones`;
-    const fwCount = await sql<{ n: number }>`select count(*)::int as n from firewall_rules`;
-    return {
-      settings,
-      modules,
-      metrics: await liveMetrics(),
-      counts: {
-        sites: siteCount[0]?.n ?? 0,
-        apps: appCount[0]?.n ?? 0,
-        mailboxes: mailCount[0]?.n ?? 0,
-        zones: zoneCount[0]?.n ?? 0,
-        firewall: fwCount[0]?.n ?? 0,
-      },
-      sites,
-      apps,
-      activity,
-    };
-  },
-);
-
-export const listSites = createServerFn({ method: "GET" }).handler(async () => {
-  const sql = await getSql();
-  return (await sql<Record<string, unknown>>`
-    select sites.*, ip_addresses.address as ip_address
-    from sites
-    left join ip_addresses on ip_addresses.id = sites.ip_id
-    order by domain
-  `).map(mapSite);
-});
+  });
 
 async function certFor(domain: string, ssl: boolean): Promise<CertInfo> {
   if (!ssl) return { status: "off", message: "TLS is off for this site", expires: null };
@@ -331,6 +352,7 @@ async function certFor(domain: string, ssl: boolean): Promise<CertInfo> {
 }
 
 export const getSite = createServerFn({ method: "GET" })
+  .middleware([authMiddleware])
   .validator(z.object({ id: z.number() }))
   .handler(async ({ data }) => {
     const sql = await getSql();
@@ -453,15 +475,17 @@ export const deleteSite = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
-export const listApps = createServerFn({ method: "GET" }).handler(async () => {
-  const sql = await getSql();
-  return (await sql<Record<string, unknown>>`
-    select node_apps.*, ip_addresses.address as ip_address
-    from node_apps
-    left join ip_addresses on ip_addresses.id = node_apps.ip_id
-    order by name
-  `).map(mapApp);
-});
+export const listApps = createServerFn({ method: "GET" })
+  .middleware([authMiddleware])
+  .handler(async () => {
+    const sql = await getSql();
+    return (await sql<Record<string, unknown>>`
+      select node_apps.*, ip_addresses.address as ip_address
+      from node_apps
+      left join ip_addresses on ip_addresses.id = node_apps.ip_id
+      order by name
+    `).map(mapApp);
+  });
 
 export const createApp = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
@@ -547,12 +571,14 @@ export const deleteApp = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
-export const listFirewall = createServerFn({ method: "GET" }).handler(async () => {
-  const sql = await getSql();
-  return (await sql<Record<string, unknown>>`
-    select * from firewall_rules order by id
-  `).map(mapRule);
-});
+export const listFirewall = createServerFn({ method: "GET" })
+  .middleware([authMiddleware])
+  .handler(async () => {
+    const sql = await getSql();
+    return (await sql<Record<string, unknown>>`
+      select * from firewall_rules order by id
+    `).map(mapRule);
+  });
 
 export const createFirewallRule = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
@@ -603,15 +629,17 @@ export const deleteFirewallRule = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
-export const listMailboxes = createServerFn({ method: "GET" }).handler(async () => {
-  const sql = await getSql();
-  return (await sql<Record<string, unknown>>`
-    select id, address, quota_mb, used_mb, status, created_at,
-      (password_hash is not null and password_hash <> '') as has_password
-    from mailboxes
-    order by address
-  `).map(mapMailbox);
-});
+export const listMailboxes = createServerFn({ method: "GET" })
+  .middleware([authMiddleware])
+  .handler(async () => {
+    const sql = await getSql();
+    return (await sql<Record<string, unknown>>`
+      select id, address, quota_mb, used_mb, status, created_at,
+        (password_hash is not null and password_hash <> '') as has_password
+      from mailboxes
+      order by address
+    `).map(mapMailbox);
+  });
 
 export const createMailbox = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
@@ -683,16 +711,18 @@ export const deleteMailbox = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
-export const listDns = createServerFn({ method: "GET" }).handler(async () => {
-  const sql = await getSql();
-  const zones = (await sql<Record<string, unknown>>`select * from dns_zones order by name`).map(
-    mapZone,
-  );
-  const records = (await sql<Record<string, unknown>>`select * from dns_records order by type, name`).map(
-    mapRecord,
-  );
-  return { zones, records };
-});
+export const listDns = createServerFn({ method: "GET" })
+  .middleware([authMiddleware])
+  .handler(async () => {
+    const sql = await getSql();
+    const zones = (await sql<Record<string, unknown>>`select * from dns_zones order by name`).map(
+      mapZone,
+    );
+    const records = (await sql<Record<string, unknown>>`select * from dns_records order by type, name`).map(
+      mapRecord,
+    );
+    return { zones, records };
+  });
 
 export const createDnsZone = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
@@ -754,12 +784,14 @@ export const deleteDnsRecord = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
-export const listModules = createServerFn({ method: "GET" }).handler(async () => {
-  const sql = await getSql();
-  return (await sql<Record<string, unknown>>`select * from modules order by sort_order`).map(
-    mapModule,
-  );
-});
+export const listModules = createServerFn({ method: "GET" })
+  .middleware([authMiddleware])
+  .handler(async () => {
+    const sql = await getSql();
+    return (await sql<Record<string, unknown>>`select * from modules order by sort_order`).map(
+      mapModule,
+    );
+  });
 
 export const toggleModule = createServerFn({ method: "POST" })
   .middleware([authMiddleware])

@@ -7,12 +7,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { authClient } from "@/lib/auth/client";
 import { loginEmails } from "@/lib/panel/admin-id";
-import { adminStatus, getPanelState } from "@/lib/panel/server";
+import { adminStatus, getLoginInfo } from "@/lib/panel/server";
 
 export const Route = createFileRoute("/login")({
   loader: async () => {
-    const [status, state] = await Promise.all([adminStatus(), getPanelState()]);
-    return { ...status, hostname: state.settings.hostname };
+    const [status, info] = await Promise.all([adminStatus(), getLoginInfo()]);
+    return { ...status, hostname: info.hostname };
   },
   component: LoginPage,
 });
