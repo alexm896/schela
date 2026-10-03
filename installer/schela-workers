@@ -1,0 +1,113 @@
+#!/usr/bin/env python3
+"""Privileged worker ops for the Schela panel. JSON on stdin, JSON on stdout.
+
+The panel user `schela` may sudo this binary with no password, so it accepts
+only two operations on workers that exist in the panel state:
+
+  {"op": "restart", "id": 3}
+  {"op": "logs", "id": 3, "lines": 200}
+
+Unit names are built here from the integer id; nothing from the request is
+passed to systemctl or journalctl as free text, and no shell is involved.
+"""
+from __future__ import annotations
+
+import json
+import os
+import re
+import subprocess
+import sys
+from typing import Any
+
+# Under sudo the caller never chooses the state file (sudo also resets env).
+STATE = "/var/lib/schela/state.json" if "SUDO_USER" in os.environ else os.environ.get(
+    "SCHELA_STATE", "/var/lib/schela/state.json"
+)
+SYSTEMCTL = "/usr/bin/systemctl"
+JOURNALCTL = "/usr/bin/journalctl"
+MAX_LINE = 2000
+
+
+def fail(msg: str, code: int = 1) -> None:
+    sys.stdout.write(json.dumps({"ok": False, "error": msg}) + "\n")
+    raise SystemExit(code)
+
+
+def load_worker(raw_id: Any) -> dict[str, Any]:
+    if isinstance(raw_id, bool) or not isinstance(raw_id, int) or not 1 <= raw_id <= 999_999_999:
+        raise ValueError("Invalid worker id")
+    try:
+        with open(STATE, encoding="utf-8") as fh:
+            state = json.load(fh)
+    except (OSError, ValueError) as exc:
+        raise ValueError("Panel state is not readable") from exc
+    for worker in state.get("workers") or []:
+        if isinstance(worker, dict) and worker.get("id") == raw_id:
+            procs = worker.get("processes")
+            if isinstance(procs, bool) or not isinstance(procs, int) or not 1 <= procs <= 8:
+                raise ValueError("Invalid worker in panel state")
+            return worker
+    raise ValueError("Worker not found")
+
+
+def units(worker: dict[str, Any]) -> list[str]:
+    return [f"schela-worker-{worker['id']}@{n}.service" for n in range(1, worker["processes"] + 1)]
+
+
+def run(argv: list[str], timeout: int = 15) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False)
+
+
+def op_restart(worker: dict[str, Any]) -> dict[str, Any]:
+    if worker.get("enabled") is not True:
+        raise ValueError("Worker is stopped")
+    names = units(worker)
+    run([SYSTEMCTL, "reset-failed", "--", *names])
+    # --no-block: a graceful stop can wait for a long queue job to finish.
+    res = run([SYSTEMCTL, "restart", "--no-block", "--", *names])
+    if res.returncode != 0:
+        raise ValueError(res.stderr.strip() or "systemctl restart failed")
+    return {"ok": True, "units": names}
+
+
+def op_logs(worker: dict[str, Any], raw_lines: Any) -> dict[str, Any]:
+    lines = raw_lines if isinstance(raw_lines, int) and not isinstance(raw_lines, bool) else 200
+    lines = max(10, min(500, lines))
+    argv = [JOURNALCTL, "--no-pager", "--quiet", "--output=short-iso", f"--lines={lines}"]
+    for name in units(worker):
+        argv += ["--unit", name]
+    res = run(argv)
+    if res.returncode != 0:
+        raise ValueError(res.stderr.strip() or "journalctl failed")
+    out = [line[:MAX_LINE] for line in res.stdout.splitlines()]
+    return {"ok": True, "lines": out[-lines:]}
+
+
+def main() -> None:
+    if len(sys.argv) > 1 and sys.argv[1] in ("-h", "--help"):
+        sys.stdout.write("schela-workers - JSON on stdin. Ops: restart logs\n")
+        return
+    try:
+        raw = sys.stdin.read(65536)
+        req = json.loads(raw) if raw.strip() else {}
+    except ValueError:
+        fail("Invalid JSON")
+    if not isinstance(req, dict):
+        fail("Invalid request")
+    op = req.get("op")
+    try:
+        if op not in ("restart", "logs"):
+            raise ValueError("Unknown op")
+        worker = load_worker(req.get("id"))
+        if not re.fullmatch(r"[a-z_][a-z0-9_-]{0,31}", str(worker.get("user", ""))):
+            raise ValueError("Invalid worker in panel state")
+        out = op_restart(worker) if op == "restart" else op_logs(worker, req.get("lines"))
+        sys.stdout.write(json.dumps(out) + "\n")
+    except subprocess.TimeoutExpired:
+        fail("Timed out talking to systemd")
+    except (ValueError, OSError) as exc:
+        fail(str(exc) or exc.__class__.__name__)
+
+
+if __name__ == "__main__":
+    main()

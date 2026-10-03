@@ -19,6 +19,7 @@ import {
   mapSite,
   mapZone,
 } from "./map";
+import { normalizeWebRoot, siteRootFor, webRootFromRoot } from "./site-root";
 import type {
   CertInfo,
   DashboardData,
@@ -384,6 +385,7 @@ export const updateSite = createServerFn({ method: "POST" })
       ssl: z.boolean().optional(),
       forceHttps: z.boolean().optional(),
       status: z.enum(["active", "stopped"]).optional(),
+      webRoot: z.string().max(300).optional(),
     }),
   )
   .handler(async ({ data }) => {
@@ -401,6 +403,8 @@ export const updateSite = createServerFn({ method: "POST" })
     const ssl = data.ssl ?? current.ssl;
     const forceHttps = data.forceHttps ?? current.forceHttps;
     const status = data.status ?? current.status;
+    const root =
+      data.webRoot === undefined ? current.root : siteRootFor(user, normalizeWebRoot(data.webRoot));
     const rows = await sql<Record<string, unknown>>`
       update sites
       set php_version = ${phpVersion},
@@ -409,7 +413,8 @@ export const updateSite = createServerFn({ method: "POST" })
           ssl = ${ssl},
           force_https = ${forceHttps},
           status = ${status},
-          pool = ${pool}
+          pool = ${pool},
+          root = ${root}
       where id = ${data.id}
       returning *
     `;
@@ -419,6 +424,10 @@ export const updateSite = createServerFn({ method: "POST" })
         "php",
         `Switched ${current.domain} to PHP ${data.phpVersion}`,
       );
+    }
+    if (root !== current.root) {
+      const folder = webRootFromRoot(user, root);
+      await logActivity(sql, "site", `Document root of ${current.domain} set to www${folder ? `/${folder}` : ""}`);
     }
     await applyAfterChange(sql);
     return mapSite(rows[0]);

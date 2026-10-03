@@ -10,6 +10,7 @@ import type {
   ModuleRow,
   NodeApp,
   Site,
+  SiteWorker,
 } from "./types";
 
 function iso(value: unknown) {
@@ -98,6 +99,21 @@ export function mapIp(row: Record<string, unknown>): IpAddress {
     siteId: row.site_id == null || row.site_id === "" ? null : num(row.site_id),
     appId: row.app_id == null || row.app_id === "" ? null : num(row.app_id),
     assignedTo: row.assigned_to == null || row.assigned_to === "" ? null : String(row.assigned_to),
+    createdAt: iso(row.created_at),
+  };
+}
+
+export function mapWorker(row: Record<string, unknown>): SiteWorker {
+  return {
+    id: num(row.id),
+    siteId: num(row.site_id),
+    name: String(row.name),
+    preset: String(row.preset),
+    command: String(row.command),
+    processes: num(row.processes),
+    stopTimeout: num(row.stop_timeout),
+    memoryMb: num(row.memory_mb),
+    enabled: bool(row.enabled),
     createdAt: iso(row.created_at),
   };
 }

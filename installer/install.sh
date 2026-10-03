@@ -232,6 +232,7 @@ install -m 0755 "$HERE/schela-apply" /usr/local/sbin/schela-apply
 install -m 0755 "$HERE/schela" /usr/local/sbin/schela
 install -m 0755 "$HERE/schela-files" /usr/local/sbin/schela-files
 install -m 0755 "$HERE/schela-backup" /usr/local/sbin/schela-backup
+install -m 0755 "$HERE/schela-workers" /usr/local/sbin/schela-workers
 install -m 0644 "$HERE/templates/sudoers" /etc/sudoers.d/schela
 chmod 0440 /etc/sudoers.d/schela
 visudo -cf /etc/sudoers.d/schela >/dev/null
