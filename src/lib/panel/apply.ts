@@ -6,8 +6,10 @@ import {
   mapRecord,
   mapRule,
   mapSite,
+  mapWorker,
   mapZone,
 } from "./map";
+import { parseWorkerCommand } from "./workers";
 import type { LiveMetrics } from "./types";
 
 export function isVpsApply(): boolean {
@@ -73,6 +75,41 @@ export async function dumpAndApply(sql: Sql): Promise<void> {
     left join sites on cron_jobs.kind = 'site' and sites.id = cron_jobs.target_id
     left join node_apps on cron_jobs.kind = 'app' and node_apps.id = cron_jobs.target_id
   `;
+
+  const workerRows = await sql<Record<string, unknown>>`
+    select site_workers.*,
+      sites.jail_user as site_user,
+      sites.php_version as site_php,
+      sites.domain as site_domain,
+      sites.status as site_status
+    from site_workers
+    join sites on sites.id = site_workers.site_id
+    order by site_workers.id
+  `;
+  const workers = workerRows.flatMap((row) => {
+    const worker = mapWorker(row);
+    let argv: string[];
+    try {
+      argv = parseWorkerCommand(worker.command);
+    } catch (err) {
+      console.error(`[schela] skipping worker ${worker.id}:`, err);
+      return [];
+    }
+    return [
+      {
+        id: worker.id,
+        name: worker.name,
+        domain: String(row.site_domain),
+        user: String(row.site_user),
+        phpVersion: String(row.site_php),
+        argv,
+        processes: worker.processes,
+        stopTimeout: worker.stopTimeout,
+        memoryMb: worker.memoryMb,
+        enabled: worker.enabled && row.site_status === "active",
+      },
+    ];
+  });
 
   const moduleMap: Record<string, boolean> = {};
   for (const m of modules) moduleMap[m.slug] = m.enabled;
@@ -168,6 +205,7 @@ export async function dumpAndApply(sql: Sql): Promise<void> {
           cwd,
         };
       }),
+    workers,
     dns: {
       zones: zones.map((zone) => ({
         name: zone.name,

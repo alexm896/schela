@@ -88,6 +88,19 @@ export type IpAddress = {
 
 export type { BackupJob, BackupRun, BackupScope } from "./backup";
 
+export type SiteWorker = {
+  id: number;
+  siteId: number;
+  name: string;
+  preset: string;
+  command: string;
+  processes: number;
+  stopTimeout: number;
+  memoryMb: number;
+  enabled: boolean;
+  createdAt: string;
+};
+
 export type CronJob = {
   id: number;
   kind: "site" | "app";

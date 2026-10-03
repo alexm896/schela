@@ -133,7 +133,10 @@ apply_sites() {
     ok_php "$php" || { log "skip $domain, bad php $php"; continue; }
     [[ "$pool" =~ ^[A-Za-z0-9._-]+$ ]] || { log "skip $domain, bad pool"; continue; }
     [[ "$mem" =~ ^[0-9]{2,4}M$ ]] || mem="256M"
-    [[ "$root" == /home/* ]] || root="/home/${user}/www"
+    if [[ ! "$root" =~ ^/home/${user}/www(/[A-Za-z0-9_-][A-Za-z0-9._-]{0,63}){0,4}$ ]]; then
+      [ "$root" = "null" ] || log "site $domain: document root outside www, using www"
+      root="/home/${user}/www"
+    fi
 
     log "site $domain  php $php  user $user"
 
@@ -279,6 +282,188 @@ UNIT
       SSL_DOMAINS+=("$domain")
     fi
   done < <(jq -c '.apps // [] | .[]' "$STATE")
+}
+
+# --- site workers (queues, Horizon, scheduler) ------------------------------
+SYSTEMD_DIR="${SCHELA_SYSTEMD_DIR:-/etc/systemd/system}"
+# argv must be 1-32 non-empty strings without control characters.
+WORKER_ARGV_OK='(.argv | type == "array") and (.argv | length >= 1 and length <= 32) and (.argv | all(type == "string" and length >= 1 and length <= 200 and (test("[[:cntrl:]]") | not)))'
+# Quote one ExecStart= argument: inside double quotes systemd unescapes \\ and
+# \", and expands %specifiers and $VARIABLES, so escape all four.
+WORKER_SD='def sd: "\"" + (gsub("\\\\"; "\\\\") | gsub("\""; "\\\"") | gsub("%"; "%%") | gsub("\\$"; "$$")) + "\"";'
+
+worker_instances() {
+  # Every instance systemd knows about or will start at boot, for one worker id.
+  {
+    systemctl list-units --all --plain --no-legend --type=service "schela-worker-${1}@*.service" 2>/dev/null \
+      | awk '{print $1}'
+    for link in "$SYSTEMD_DIR"/multi-user.target.wants/schela-worker-"${1}"@*.service; do
+      [ -e "$link" ] || [ -L "$link" ] || continue
+      basename "$link"
+    done
+  } | grep -E "^schela-worker-${1}@[0-9]+\.service$" | sort -u
+}
+
+worker_stop() {
+  # Disable and stop without waiting: a queue job may take minutes to finish.
+  systemctl disable --now --no-block "$1" >/dev/null 2>&1 || true
+}
+
+apply_workers() {
+  declare -A w_procs=() w_enabled=() w_changed=()
+  local reload=0
+
+  while IFS= read -r worker; do
+    [ -n "$worker" ] || continue
+    id="$(jq -r '.id' <<<"$worker")"
+    [[ "$id" =~ ^[1-9][0-9]{0,8}$ ]] || { log "skip worker, bad id"; continue; }
+    user="$(jq -r '.user' <<<"$worker")"
+    php="$(jq -r '.phpVersion' <<<"$worker")"
+    domain="$(jq -r '.domain' <<<"$worker")"
+    name="$(jq -r '.name' <<<"$worker")"
+    procs="$(jq -r '.processes' <<<"$worker")"
+    stop="$(jq -r '.stopTimeout' <<<"$worker")"
+    mem="$(jq -r '.memoryMb' <<<"$worker")"
+    enabled="$(jq -r '.enabled' <<<"$worker")"
+
+    ok_user "$user" || { log "skip worker $id, bad user"; continue; }
+    ok_php "$php" || { log "skip worker $id, bad php"; continue; }
+    ok_domain "$domain" || { log "skip worker $id, bad domain"; continue; }
+    [[ "$name" =~ ^[A-Za-z0-9][A-Za-z0-9\ ._-]{0,59}$ ]] || { log "skip worker $id, bad name"; continue; }
+    [[ "$procs" =~ ^[1-8]$ ]] || { log "skip worker $id, bad process count"; continue; }
+    [[ "$stop" =~ ^[0-9]{1,4}$ ]] && [ "$stop" -ge 5 ] && [ "$stop" -le 7200 ] \
+      || { log "skip worker $id, bad stop timeout"; continue; }
+    [[ "$mem" =~ ^[0-9]{2,4}$ ]] && [ "$mem" -ge 64 ] && [ "$mem" -le 8192 ] \
+      || { log "skip worker $id, bad memory limit"; continue; }
+    jq -e "$WORKER_ARGV_OK" <<<"$worker" >/dev/null || { log "skip worker $id, bad command"; continue; }
+
+    exe="$(jq -r '.argv[0]' <<<"$worker")"
+    if [ "$exe" = "php" ]; then
+      exe="/usr/bin/php${php}"
+    elif [[ "$exe" =~ ^/[A-Za-z0-9._/-]+$ ]] && [[ "$exe/" != */../* ]]; then
+      :
+    elif [[ "$exe" =~ ^[A-Za-z0-9._-][A-Za-z0-9._/-]*$ ]] && [[ "/$exe/" != */../* ]] && [[ "$exe" != */ ]]; then
+      exe="/home/${user}/www/${exe}"
+    else
+      log "skip worker $id, bad executable"
+      continue
+    fi
+    if [ "$DRY" -eq 0 ]; then
+      uid="$(id -u "$user" 2>/dev/null || true)"
+      # useradd gives site users UID_MIN..UID_MAX (1000-59999); never root,
+      # system accounts, or nobody (65534).
+      if [[ ! "$uid" =~ ^[0-9]+$ ]] || [ "$uid" -lt 1000 ] || [ "$uid" -ge 60000 ]; then
+        log "skip worker $id, $user is not a site user"
+        continue
+      fi
+    fi
+    execline="$(jq -r --arg exe "$exe" "$WORKER_SD"' ([$exe] + .argv[1:]) | map(sd) | join(" ")' <<<"$worker")"
+
+    content="[Unit]
+Description=Schela worker ${name} for ${domain} (process %i)
+After=network-online.target mysql.service mariadb.service postgresql.service redis-server.service
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+[Service]
+Type=exec
+User=${user}
+Group=${user}
+WorkingDirectory=/home/${user}/www
+Environment=HOME=/home/${user}
+ExecStart=${execline}
+Restart=always
+RestartSec=5
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=${stop}
+MemoryMax=${mem}M
+TasksMax=256
+UMask=0022
+SyslogIdentifier=schela-worker-${id}
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=tmpfs
+BindPaths=/home/${user}
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target"
+
+    unit_file="$SYSTEMD_DIR/schela-worker-${id}@.service"
+    changed=0
+    if [ ! -f "$unit_file" ] || [ "$(cat "$unit_file")" != "$content" ]; then
+      write_file "$unit_file" "$content"
+      changed=1
+      reload=1
+    fi
+    w_procs[$id]="$procs"
+    w_enabled[$id]=0
+    truthy "$enabled" && w_enabled[$id]=1
+    w_changed[$id]="$changed"
+    log "worker $id ($name) on $domain: ${procs} process(es), $([ "${w_enabled[$id]}" -eq 1 ] && echo on || echo off)"
+  done < <(jq -c '.workers // [] | .[]' "$STATE")
+
+  # Workers removed from the panel (or whose site is gone).
+  for unit_file in "$SYSTEMD_DIR"/schela-worker-*@.service; do
+    [ -e "$unit_file" ] || continue
+    wid="${unit_file##*/schela-worker-}"
+    wid="${wid%@.service}"
+    [[ "$wid" =~ ^[0-9]+$ ]] || continue
+    [ -n "${w_procs[$wid]+x}" ] && continue
+    if [ "$DRY" -eq 1 ]; then
+      log "would remove worker $wid"
+      continue
+    fi
+    log "remove worker $wid"
+    while IFS= read -r inst; do
+      [ -n "$inst" ] && worker_stop "$inst"
+    done < <(worker_instances "$wid")
+    rm -f "$unit_file" "$SYSTEMD_DIR"/multi-user.target.wants/schela-worker-"${wid}"@*.service
+    reload=1
+  done
+
+  [ "$DRY" -eq 1 ] && return
+  [ "$reload" -eq 1 ] && systemctl daemon-reload
+
+  for id in "${!w_procs[@]}"; do
+    procs="${w_procs[$id]}"
+    if [ "${w_enabled[$id]}" -eq 1 ]; then
+      for n in $(seq 1 "$procs"); do
+        inst="schela-worker-${id}@${n}.service"
+        if systemctl is-active --quiet "$inst"; then
+          # Picks up a changed unit; SIGTERM lets the current job finish.
+          [ "${w_changed[$id]}" -eq 1 ] && systemctl restart --no-block "$inst"
+        else
+          systemctl reset-failed "$inst" >/dev/null 2>&1 || true
+        fi
+        systemctl enable --now --no-block "$inst" >/dev/null 2>&1 || log "worker $id: could not start $inst"
+      done
+    fi
+    while IFS= read -r inst; do
+      [ -n "$inst" ] || continue
+      n="${inst#schela-worker-${id}@}"
+      n="${n%.service}"
+      if [ "${w_enabled[$id]}" -eq 0 ] || [ "$n" -gt "$procs" ]; then
+        worker_stop "$inst"
+      fi
+    done < <(worker_instances "$id")
+  done
 }
 
 # --- firewall --------------------------------------------------------------
@@ -684,6 +869,7 @@ issue_certs() {
 log "applying $(jq -r '.settings.hostname // "unknown"' "$STATE")"
 apply_sites
 apply_apps
+apply_workers
 apply_firewall
 apply_mail
 apply_dns
