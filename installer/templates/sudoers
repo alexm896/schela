@@ -1,5 +1,6 @@
 schela ALL=(root) NOPASSWD: /usr/local/sbin/schela-apply
 schela ALL=(root) NOPASSWD: /usr/local/sbin/schela
 schela ALL=(root) NOPASSWD: /usr/local/sbin/schela-files
+schela ALL=(root) NOPASSWD: /usr/local/sbin/schela-workers
 schela ALL=(root) NOPASSWD: /usr/local/sbin/schela-backup run *
 schela ALL=(root) NOPASSWD: /usr/local/sbin/schela-backup cron

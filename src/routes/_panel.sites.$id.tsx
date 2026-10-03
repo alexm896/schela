@@ -1,10 +1,13 @@
 import { createFileRoute, Link, useNavigate, useRouter } from "@tanstack/react-router";
 import { ArrowLeft, FolderLock, FolderOpen, User } from "lucide-react";
+import { useState } from "react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/page-header";
+import { SiteWorkersCard } from "@/components/site-workers";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -16,6 +19,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { deleteSite, getSite, retrySiteTls, updateSite } from "@/lib/panel/server";
 import { PHP_VERSIONS } from "@/lib/panel/types";
+import { normalizeWebRoot, webRootFromRoot } from "@/lib/panel/site-root";
 
 export const Route = createFileRoute("/_panel/sites/$id")({
   loader: async ({ params }) => {
@@ -30,6 +34,14 @@ function SiteDetail() {
   const site = Route.useLoaderData();
   const router = useRouter();
   const navigate = useNavigate();
+  const savedWebRoot = webRootFromRoot(site.systemUser, site.root);
+  const [webRoot, setWebRoot] = useState(savedWebRoot);
+  let webRootError = "";
+  try {
+    normalizeWebRoot(webRoot);
+  } catch (err) {
+    webRootError = err instanceof Error ? err.message : "Invalid document root";
+  }
 
   async function patch(data: {
     id: number;
@@ -39,12 +51,23 @@ function SiteDetail() {
     ssl?: boolean;
     forceHttps?: boolean;
     status?: "active" | "stopped";
+    webRoot?: string;
   }) {
     try {
       await updateSite({ data });
       await router.invalidate();
+      return true;
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Update failed");
+      return false;
+    }
+  }
+
+  async function saveWebRoot() {
+    const next = normalizeWebRoot(webRoot);
+    if (await patch({ id: site.id, webRoot: next })) {
+      setWebRoot(next);
+      toast.success(`Document root set to www${next ? `/${next}` : ""}`);
     }
   }
 
@@ -90,6 +113,40 @@ function SiteDetail() {
             <CardTitle>PHP runtime</CardTitle>
           </CardHeader>
           <CardContent className="grid gap-5">
+            <div className="grid gap-2">
+              <Label htmlFor="site-web-root">Document root</Label>
+              <div className="flex max-w-md items-center gap-2">
+                <div className="flex min-w-0 flex-1 items-center rounded-md shadow-[var(--shadow-border)]">
+                  <span className="shrink-0 pl-3 font-mono text-xs text-muted-foreground">
+                    /home/{site.systemUser}/www/
+                  </span>
+                  <Input
+                    id="site-web-root"
+                    value={webRoot}
+                    onChange={(e) => setWebRoot(e.target.value)}
+                    placeholder="public"
+                    className="min-w-0 border-0 pl-1 font-mono text-sm shadow-none focus-visible:ring-0"
+                    spellCheck={false}
+                    aria-invalid={webRootError ? true : undefined}
+                  />
+                </div>
+                <Button
+                  variant="outline"
+                  disabled={Boolean(webRootError) || webRoot.trim().replace(/^\/+|\/+$/g, "") === savedWebRoot}
+                  onClick={() => void saveWebRoot()}
+                >
+                  Save
+                </Button>
+              </div>
+              {webRootError ? (
+                <p className="text-xs text-destructive">{webRootError}</p>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  Folder nginx serves. Laravel and Symfony apps use <span className="font-mono">public</span>; leave
+                  empty to serve www itself.
+                </p>
+              )}
+            </div>
             <div className="grid gap-2">
               <Label>Version</Label>
               <Select
@@ -283,6 +340,13 @@ function SiteDetail() {
           </Card>
         </div>
       </div>
+
+      <SiteWorkersCard
+        siteId={site.id}
+        systemUser={site.systemUser}
+        phpVersion={site.phpVersion}
+        siteActive={site.status === "active"}
+      />
     </div>
   );
 }
