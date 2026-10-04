@@ -1,17 +1,9 @@
-import { getSql } from "@/lib/db";
+import { createAdminUser, userCount } from "@/lib/auth/admin.server";
 import { DEFAULT_ADMIN_EMAIL, toAuthEmail } from "./admin-id";
 
 type BootstrapFile = { email: string; password: string; name?: string };
 
-async function userCount(): Promise<number> {
-  const sql = await getSql();
-  try {
-    const rows = await sql<{ n: number }>`select count(*)::int as n from "user"`;
-    return rows[0]?.n ?? 0;
-  } catch {
-    return 0;
-  }
-}
+const BOOTSTRAP_FILE = "/var/lib/schela/bootstrap-admin.json";
 
 async function readBootstrap(): Promise<BootstrapFile | null> {
   const email = toAuthEmail(process.env.SCHELA_ADMIN_EMAIL?.trim() || DEFAULT_ADMIN_EMAIL);
@@ -22,7 +14,7 @@ async function readBootstrap(): Promise<BootstrapFile | null> {
   if (typeof window !== "undefined") return null;
   try {
     const fs = await import("node:fs/promises");
-    const raw = await fs.readFile("/var/lib/schela/bootstrap-admin.json", "utf8");
+    const raw = await fs.readFile(BOOTSTRAP_FILE, "utf8");
     const parsed = JSON.parse(raw) as BootstrapFile;
     if (parsed.password) {
       return {
@@ -40,7 +32,7 @@ async function readBootstrap(): Promise<BootstrapFile | null> {
 async function dropBootstrapFile() {
   try {
     const fs = await import("node:fs/promises");
-    await fs.unlink("/var/lib/schela/bootstrap-admin.json");
+    await fs.unlink(BOOTSTRAP_FILE);
   } catch {
     /* already gone */
   }
@@ -71,17 +63,16 @@ export async function bootstrapAdminIfNeeded(): Promise<void> {
   const boot = await readBootstrap();
   if (!boot) return;
   try {
-    const { auth } = await import("@/lib/auth/server");
-    await auth.api.signUpEmail({
-      body: {
-        email: boot.email,
-        password: boot.password,
-        name: boot.name || "Admin",
-      },
+    await createAdminUser({
+      email: boot.email,
+      password: boot.password,
+      name: boot.name || "Admin",
     });
   } catch (err) {
     console.error("[schela] admin bootstrap:", err);
   }
+  // Keep the credentials around for the next attempt if creation failed.
+  if ((await userCount()) === 0) return;
   await dropBootstrapFile();
   await stripAdminPasswordFromEnv();
 }
@@ -89,4 +80,14 @@ export async function bootstrapAdminIfNeeded(): Promise<void> {
 export async function hasAdminUser(): Promise<boolean> {
   await bootstrapAdminIfNeeded();
   return (await userCount()) > 0;
+}
+
+/**
+ * First-run form: create the admin when the installer left no credentials and
+ * no account exists. Returns false when an admin already exists (including one
+ * just created from the installer's credentials).
+ */
+export async function createFirstAdmin(username: string, password: string): Promise<boolean> {
+  await bootstrapAdminIfNeeded();
+  return createAdminUser({ email: toAuthEmail(username), password, name: "Admin" });
 }
