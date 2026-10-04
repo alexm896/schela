@@ -3,6 +3,8 @@ const MAIL_RE = /^[a-z0-9._+-]{1,64}@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a
 export function isMailAddress(raw: string): boolean {
   const t = raw.trim().toLowerCase();
   if (!t || t.length > 120) return false;
+  // Rejecting control characters is the point of this check.
+  // eslint-disable-next-line no-control-regex
   if (t.includes("..") || /[\s<>"'\\(),;:\x00-\x1f]/.test(t)) return false;
   return MAIL_RE.test(t);
 }
