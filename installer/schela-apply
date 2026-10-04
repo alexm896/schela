@@ -196,11 +196,17 @@ apply_sites() {
 }
 
 # --- node apps -------------------------------------------------------------
+# Where unit files go. Tests point this at a scratch directory.
+SYSTEMD_DIR="${SCHELA_SYSTEMD_DIR:-/etc/systemd/system}"
+
 apply_apps() {
   mkdir -p /etc/nginx/schela-apps.d /var/lib/schela/apps
   if [ "$DRY" -eq 0 ]; then
     find /etc/nginx/schela-apps.d -name 'app-*.conf' -delete 2>/dev/null || true
   fi
+  # Units of every app still in the panel, valid or not; anything else is a
+  # deleted app and gets stopped and removed below.
+  declare -A keep_units=()
 
   while IFS= read -r app; do
     [ -n "$app" ] || continue
@@ -217,6 +223,7 @@ apply_apps() {
     slug="$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-' | sed 's/^-//;s/-$//')"
     unit="schela-app-${slug}"
     user="sa_${slug:0:20}"
+    keep_units["$unit"]=1
 
     ok_domain "$domain" || { log "skip app, bad domain"; continue; }
     ok_node "$ver" || { log "skip $name, bad node $ver"; continue; }
@@ -241,7 +248,7 @@ apply_apps() {
         fi
       fi
 
-      cat >"/etc/systemd/system/${unit}.service" <<UNIT
+      cat >"$SYSTEMD_DIR/${unit}.service" <<UNIT
 [Unit]
 Description=Schela Node app ${name}
 After=network.target
@@ -282,10 +289,25 @@ UNIT
       SSL_DOMAINS+=("$domain")
     fi
   done < <(jq -c '.apps // [] | .[]' "$STATE")
+
+  [ "$DRY" -eq 0 ] || return 0
+  local unit_file stale removed=0
+  for unit_file in "$SYSTEMD_DIR"/schela-app-*.service; do
+    [ -f "$unit_file" ] || continue
+    stale="$(basename "$unit_file" .service)"
+    [[ "$stale" =~ ^schela-app-[a-z0-9-]+$ ]] || continue
+    [ -n "${keep_units[$stale]:-}" ] && continue
+    log "removing unit of deleted app: $stale"
+    systemctl disable --now "$stale" >/dev/null 2>&1 || true
+    rm -f "$unit_file"
+    removed=1
+  done
+  if [ "$removed" -eq 1 ]; then
+    systemctl daemon-reload
+  fi
 }
 
 # --- site workers (queues, Horizon, scheduler) ------------------------------
-SYSTEMD_DIR="${SCHELA_SYSTEMD_DIR:-/etc/systemd/system}"
 # argv must be 1-32 non-empty strings without control characters.
 WORKER_ARGV_OK='(.argv | type == "array") and (.argv | length >= 1 and length <= 32) and (.argv | all(type == "string" and length >= 1 and length <= 200 and (test("[[:cntrl:]]") | not)))'
 # Quote one ExecStart= argument: inside double quotes systemd unescapes \\ and
@@ -630,8 +652,18 @@ DOVE
 }
 
 # --- cron ------------------------------------------------------------------
+# /etc/cron.d comes with the cron package. Without it the files are still
+# written (so jobs start once cron is installed) but nothing runs them.
+ensure_cron_dir() {
+  install -d -m 0755 /etc/cron.d
+  if ! command -v cron >/dev/null 2>&1 && ! command -v crond >/dev/null 2>&1; then
+    log "cron is not installed: cron jobs and scheduled backups will not run (apt-get install cron)"
+  fi
+}
+
 apply_cron() {
   [ "$DRY" -eq 1 ] && { log "would apply cron jobs"; return; }
+  ensure_cron_dir
   dest=/etc/cron.d/schela-jobs
   {
     echo "SHELL=/bin/sh"
@@ -662,6 +694,7 @@ apply_cron() {
 # --- backups ---------------------------------------------------------------
 apply_backups() {
   [ "$DRY" -eq 1 ] && { log "would apply backup cron"; return; }
+  ensure_cron_dir
   dest=/etc/cron.d/schela-backups
   {
     echo "SHELL=/bin/sh"

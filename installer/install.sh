@@ -115,7 +115,7 @@ apt-get update -y
 apt-get install -y --no-install-recommends \
   ca-certificates curl gnupg apt-transport-https lsb-release \
   unzip jq rsync ufw fail2ban nginx certbot python3-certbot-nginx \
-  unattended-upgrades apt-listchanges \
+  unattended-upgrades apt-listchanges cron \
   build-essential python3
 
 # PHP 8.1–8.4 (Ondřej / Sury)
