@@ -1,6 +1,8 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
   --font-sans: "Manrope", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
@@ -39,6 +41,45 @@
 }
 
 @layer base {
+  :root {
+    color-scheme: dark;
+    --scrollbar-thumb: rgb(255 255 255 / 0.16);
+    --scrollbar-thumb-hover: rgb(255 255 255 / 0.28);
+  }
+
+  :root.light {
+    color-scheme: light;
+
+    --color-background: #fafafa;
+    --color-foreground: #18181b;
+    --color-card: #ffffff;
+    --color-card-foreground: #18181b;
+    --color-popover: #ffffff;
+    --color-popover-foreground: #18181b;
+    --color-primary: #18181b;
+    --color-primary-foreground: #fafafa;
+    --color-secondary: #f0f0f2;
+    --color-secondary-foreground: #18181b;
+    --color-muted: #f0f0f2;
+    --color-muted-foreground: #6b6b74;
+    --color-accent: #e9e9ec;
+    --color-accent-foreground: #18181b;
+    --color-destructive: #b54848;
+    --color-border: #e4e4e7;
+    --color-input: #e4e4e7;
+    --color-ring: #6b7280;
+    --color-ok: #4f7d5c;
+    --color-warn: #9c7a26;
+    --color-sidebar: #f4f4f5;
+    --color-elevated: #ffffff;
+
+    --shadow-border: 0 0 0 1px rgba(0, 0, 0, 0.08);
+    --shadow-border-hover: 0 0 0 1px rgba(0, 0, 0, 0.14);
+
+    --scrollbar-thumb: rgb(0 0 0 / 0.16);
+    --scrollbar-thumb-hover: rgb(0 0 0 / 0.28);
+  }
+
   html {
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
@@ -75,7 +116,7 @@
   * {
     border-color: var(--color-border);
     scrollbar-width: thin;
-    scrollbar-color: rgb(255 255 255 / 0.16) transparent;
+    scrollbar-color: var(--scrollbar-thumb) transparent;
   }
 
   *::-webkit-scrollbar {
@@ -88,12 +129,12 @@
   }
 
   *::-webkit-scrollbar-thumb {
-    background-color: rgb(255 255 255 / 0.16);
+    background-color: var(--scrollbar-thumb);
     border-radius: 999px;
   }
 
   *::-webkit-scrollbar-thumb:hover {
-    background-color: rgb(255 255 255 / 0.28);
+    background-color: var(--scrollbar-thumb-hover);
   }
 
   *::-webkit-scrollbar-corner {

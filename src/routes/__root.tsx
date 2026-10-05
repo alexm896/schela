@@ -7,6 +7,7 @@ import {
 import { AuthProvider } from "@/lib/auth/provider";
 import { PreviewHostBridge } from "@/components/preview-host-bridge";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { themeBootScript, useTheme } from "@/lib/theme";
 import { Toaster } from "sonner";
 import appCss from "../styles.css?url";
 
@@ -42,10 +43,12 @@ export const Route = createRootRoute({
 });
 
 function Root() {
+  const { resolved } = useTheme();
   return (
     <html lang="en" className="antialiased" suppressHydrationWarning>
       <head>
         <HeadContent />
+        <script dangerouslySetInnerHTML={{ __html: themeBootScript }} />
       </head>
       <body className="min-h-dvh bg-background text-foreground">
         <PreviewHostBridge />
@@ -53,7 +56,7 @@ function Root() {
           <TooltipProvider delayDuration={200}>
             <Outlet />
             <Toaster
-              theme="dark"
+              theme={resolved}
               position="bottom-right"
               toastOptions={{
                 className:

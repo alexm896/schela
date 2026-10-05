@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { SchelaMark } from "@/components/schela-mark";
+import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { UserButton } from "@/lib/auth/gates";
@@ -159,6 +160,7 @@ function SidebarBody({
       </div>
       <div className="shrink-0 pt-4">
         <ServerChip hostname={settings.hostname} />
+        <ThemeToggle className="mt-3" />
         <div className="mt-3 px-1">
           <UserButton />
         </div>
