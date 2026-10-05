@@ -15,6 +15,7 @@ const PUBLIC_PANEL_FNS: Record<string, string> = {
   adminStatus: "login page: tells whether an admin exists",
   sessionUser: "returns the caller's own session, or null",
   getLoginInfo: "login page: hostname and first-boot admin bootstrap",
+  createFirstAdmin: "first-run form; creates nothing once an account exists",
   completeSetup: "first-run setup; refuses once setup is complete",
 };
 
@@ -83,5 +84,25 @@ describe("server function auth coverage", () => {
       .filter((f) => !/\bsessionOrThrow\(\)/.test(f.body))
       .map((f) => `${f.file}: ${f.name}`);
     assert.deepEqual(missing, []);
+  });
+});
+
+describe("auth configuration", () => {
+  const server = readFileSync(join(LIB, "auth/server.ts"), "utf8");
+
+  it("does not let anyone register an account over HTTP", () => {
+    assert.match(server, /emailAndPassword:\s*\{\s*enabled:\s*true,\s*disableSignUp:\s*true\s*\}/);
+    assert.match(server, /databaseHooks:[\s\S]*user:[\s\S]*create:[\s\S]*before:/);
+  });
+
+  it("has no sign-in path other than the local admin password", () => {
+    for (const plugin of ["genericOAuth", "bearer(", "socialProviders", "anonymous(", "magicLink("]) {
+      assert.ok(!server.includes(plugin), `auth/server.ts must not use ${plugin}`);
+    }
+  });
+
+  it("checks the session row on every server call, not the cookie cache", () => {
+    const verify = readFileSync(join(LIB, "auth/verify.server.ts"), "utf8");
+    assert.match(verify, /getSession\(\{[\s\S]*disableCookieCache:\s*true/);
   });
 });

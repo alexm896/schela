@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { authClient } from "@/lib/auth/client";
 import { loginEmails } from "@/lib/panel/admin-id";
-import { adminStatus, getLoginInfo } from "@/lib/panel/server";
+import { adminStatus, createFirstAdmin, getLoginInfo } from "@/lib/panel/server";
 
 export const Route = createFileRoute("/login")({
   loader: async () => {
@@ -35,30 +35,23 @@ function LoginPage() {
     setBusy(true);
     try {
       if (firstRun) {
-        const { error } = await authClient.signUp.email({
-          email: candidates[0],
+        await createFirstAdmin({ data: { username, password } });
+      }
+      let last = "Wrong username or password";
+      let ok = false;
+      for (const email of candidates) {
+        const { error } = await authClient.signIn.email({
+          email,
           password,
-          name: "Admin",
           callbackURL: "/",
         });
-        if (error) throw new Error(error.message || "Could not create admin");
-      } else {
-        let last = "Wrong username or password";
-        let ok = false;
-        for (const email of candidates) {
-          const { error } = await authClient.signIn.email({
-            email,
-            password,
-            callbackURL: "/",
-          });
-          if (!error) {
-            ok = true;
-            break;
-          }
-          last = error.message || last;
+        if (!error) {
+          ok = true;
+          break;
         }
-        if (!ok) throw new Error(last);
+        last = error.message || last;
       }
+      if (!ok) throw new Error(last);
       toast.success(firstRun ? "Admin account created" : "Welcome back");
       await navigate({ to: "/" });
     } catch (err) {

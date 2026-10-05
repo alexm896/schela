@@ -4,7 +4,7 @@ import { authMiddleware } from "@/lib/auth/middleware";
 import { getSql, type Sql } from "@/lib/db";
 import { normalizeDomain, systemUserFromDomain } from "@/lib/utils";
 import { applyAfterChange, isVpsApply, publicIp, readHostMetrics } from "./apply";
-import { bootstrapAdminIfNeeded, hasAdminUser } from "./bootstrap-admin";
+import { bootstrapAdminIfNeeded, createFirstAdmin as createFirstAdminUser, hasAdminUser } from "./bootstrap-admin";
 import { displayUsername, toAuthEmail } from "./admin-id";
 import { checkMailDnsLive } from "./dns-check";
 import { describeMailDns, ensureHostDns, ensureMailDns, mailboxDomain, mailDnsBlueprint } from "./dns-auto";
@@ -194,6 +194,24 @@ async function ensureSetup(sql: Sql): Promise<void> {
 export const adminStatus = createServerFn({ method: "GET" }).handler(async () => {
   return { hasAdmin: await hasAdminUser() };
 });
+
+const firstAdminSchema = z.object({
+  username: z.string().trim().min(1).max(64),
+  password: z.string().min(8).max(128),
+});
+
+/** First-run form: creates the admin only while no account exists. */
+export const createFirstAdmin = createServerFn({ method: "POST" })
+  .validator(firstAdminSchema)
+  .handler(async ({ data }) => {
+    if (!z.email().safeParse(toAuthEmail(data.username)).success) {
+      throw new Error("Use letters, numbers, dots or dashes for the username");
+    }
+    if (!(await createFirstAdminUser(data.username, data.password))) {
+      throw new Error("An admin account already exists. Sign in instead.");
+    }
+    return { ok: true };
+  });
 
 export const sessionUser = createServerFn({ method: "GET" }).handler(async () => {
   const { getSessionUser } = await import("@/lib/auth/verify.server");
