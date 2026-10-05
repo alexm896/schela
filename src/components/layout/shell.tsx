@@ -18,14 +18,14 @@ import {
   Shield,
 } from "lucide-react";
 import { useState } from "react";
+import { UserButton } from "@/auth/gates";
 import { SchelaMark } from "@/components/layout/schela-mark";
 import { ThemeToggle } from "@/components/layout/theme-toggle";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
-import { UserButton } from "@/auth/gates";
-import { cn } from "@/lib/utils";
 import type { ModuleRow } from "@/features/modules/types";
 import type { PanelSettings } from "@/features/settings/types";
+import { cn } from "@/lib/utils";
 
 type NavItem = {
   to: string;

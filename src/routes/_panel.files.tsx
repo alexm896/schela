@@ -48,7 +48,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { formatSize, virtParent, virtSegments, type FileEntry, type FileListing } from "@/features/files/files";
 import {
   chmodFile,
   copyFile,
@@ -63,6 +62,7 @@ import {
   uploadFile,
   writeFile,
 } from "@/features/files/api";
+import { formatSize, virtParent, virtSegments, type FileEntry, type FileListing } from "@/features/files/files";
 import { cn } from "@/lib/utils";
 
 type FilesSearch = {

@@ -1,10 +1,11 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { authMiddleware } from "@/auth/middleware";
-import { getSql, type Sql } from "@/server/db";
 import { logActivity } from "@/server/activity";
 import { applyAfterChange } from "@/server/apply";
+import { getSql, type Sql } from "@/server/db";
 import { isVpsApply } from "@/server/env";
+import { runSudoHelper } from "@/server/sudo-helper";
 import {
   DATABASE_ENGINES,
   DATABASE_ENGINE_KEYS,
@@ -14,9 +15,8 @@ import {
   type DatabaseEngine,
   type GrantInput,
 } from "./databases";
-import { databasePasswordHash, generateDatabasePassword } from "./password";
 import { mapDatabase, mapDatabaseUser } from "./map";
-import { runSudoHelper } from "@/server/sudo-helper";
+import { databasePasswordHash, generateDatabasePassword } from "./password";
 import type { DatabaseUser, ManagedDatabase } from "./types";
 
 const HELPER = "/usr/local/sbin/schela-db";

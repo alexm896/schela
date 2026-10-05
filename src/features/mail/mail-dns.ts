@@ -1,9 +1,9 @@
 // The DNS records a mail domain needs (MX, SPF, DMARC, DKIM), kept in the
 // panel's own zones whenever a mailbox is created.
 
+import { ensureZone, upsertRecord } from "@/features/dns/records";
 import type { Sql } from "@/server/db";
 import { dnsRecordIp } from "@/server/env";
-import { ensureZone, upsertRecord } from "@/features/dns/records";
 import { mailboxDomain } from "./mail";
 
 export type MailDnsRow = {

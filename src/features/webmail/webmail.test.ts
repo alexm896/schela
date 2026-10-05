@@ -1,5 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { webmailCookieSecure } from "./cookie.ts";
 import {
   decodeMimeWord,
   decodeQuotedPrintable,
@@ -7,7 +8,6 @@ import {
   parseAddressList,
   parseHeaders,
 } from "./rfc822.ts";
-import { webmailCookieSecure } from "./cookie.ts";
 import { isMailAddress, assertImapFolder, quoteImap } from "./safe.ts";
 import { escapeText, sanitizeHtml } from "./sanitize.ts";
 

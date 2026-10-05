@@ -1,11 +1,11 @@
 import { createServerFn } from "@tanstack/react-start";
 import { authMiddleware } from "@/auth/middleware";
-import { mapActivity } from "@/server/activity";
-import { getSql } from "@/server/db";
 import { mapApp } from "@/features/apps/map";
-import { mapSite } from "@/features/sites/map";
 import { readModules } from "@/features/modules/modules";
 import { ensureSetup, readSettings } from "@/features/settings/settings";
+import { mapSite } from "@/features/sites/map";
+import { mapActivity } from "@/server/activity";
+import { getSql } from "@/server/db";
 import { liveMetrics } from "./metrics";
 import type { DashboardData } from "./types";
 

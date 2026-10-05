@@ -2,7 +2,6 @@ import { Link } from "@tanstack/react-router";
 import { Database, Plus } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { CredentialsDialog, NewDatabaseDialog } from "@/features/databases/components/database-dialogs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -11,6 +10,7 @@ import {
   type DatabasesOverview,
   type IssuedCredentials,
 } from "@/features/databases/api";
+import { CredentialsDialog, NewDatabaseDialog } from "@/features/databases/components/database-dialogs";
 import {
   ACCESS_LEVELS,
   DATABASE_ENGINES,

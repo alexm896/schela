@@ -18,8 +18,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { Switch } from "@/components/ui/switch";
-import type { DnsCheckResult } from "@/features/mail/dns-check";
-import { generateMailboxPassword } from "@/features/mail/mail";
 import {
   checkMailDns,
   createMailbox,
@@ -29,6 +27,8 @@ import {
   setMailboxPassword,
   toggleMailbox,
 } from "@/features/mail/api";
+import type { DnsCheckResult } from "@/features/mail/dns-check";
+import { generateMailboxPassword } from "@/features/mail/mail";
 import { formatBytes } from "@/lib/utils";
 
 export const Route = createFileRoute("/_panel/mail")({
