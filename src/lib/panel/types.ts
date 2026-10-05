@@ -1,19 +1,5 @@
 import type { AccessLevel, DatabaseEngine } from "./databases";
 
-export const DNS_TYPES = ["A", "AAAA", "CNAME", "MX", "TXT", "NS"] as const;
-
-export type DnsType = (typeof DNS_TYPES)[number];
-
-export type Mailbox = {
-  id: number;
-  address: string;
-  quotaMb: number;
-  usedMb: number;
-  status: "active" | "disabled";
-  hasPassword: boolean;
-  createdAt: string;
-};
-
 export type IpAddress = {
   id: number;
   address: string;
@@ -75,21 +61,4 @@ export type CronJob = {
   command: string;
   enabled: boolean;
   createdAt: string;
-};
-
-export type DnsZone = {
-  id: number;
-  name: string;
-  serial: number;
-  status: string;
-};
-
-export type DnsRecord = {
-  id: number;
-  zoneId: number;
-  type: string;
-  name: string;
-  value: string;
-  ttl: number;
-  priority: number | null;
 };

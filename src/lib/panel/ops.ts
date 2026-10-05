@@ -5,7 +5,7 @@ import { getSql, type Sql } from "@/server/db";
 import { logActivity } from "@/server/activity";
 import { appSystemUser } from "@/features/apps/apps";
 import { applyAfterChange } from "@/server/apply";
-import { ensureHostDns } from "./dns-auto";
+import { ensureHostDns } from "@/features/dns/records";
 import { mapApp } from "@/features/apps/map";
 import { mapSite } from "@/features/sites/map";
 import { mapCron, mapIp } from "./map";

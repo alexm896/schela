@@ -2,7 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { getSql } from "@/server/db";
 import { isVpsApply } from "@/server/env";
-import { verifyMailboxPassword } from "@/lib/panel/mail-pass";
+import { verifyMailboxPassword } from "@/features/mail/password";
 import { demoStore } from "./demo";
 import { withImap, type MailBody, type MailListItem } from "./imap";
 import { sanitizeHtml, textToHtml } from "./sanitize";

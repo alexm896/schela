@@ -1,15 +1,14 @@
 import type { Sql } from "@/server/db";
 import {
   mapBackupJob,
-  mapRecord,
   mapWorker,
-  mapZone,
 } from "@/lib/panel/map";
 import { DATABASE_ENGINE_KEYS, isAccessLevel, type DatabaseEngine } from "@/lib/panel/databases";
 import { parseWorkerCommand } from "@/lib/panel/workers";
 import { mapApp } from "@/features/apps/map";
 import { mapModule } from "@/features/modules/map";
 import { mapSite } from "@/features/sites/map";
+import { mapRecord, mapZone } from "@/features/dns/map";
 import { mapRule } from "@/features/firewall/map";
 import { isVpsApply } from "./env";
 

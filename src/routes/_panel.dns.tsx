@@ -28,8 +28,8 @@ import {
   createDnsZone,
   deleteDnsRecord,
   listDns,
-} from "@/lib/panel/server";
-import { DNS_TYPES } from "@/lib/panel/types";
+} from "@/features/dns/api";
+import { DNS_TYPES } from "@/features/dns/dns";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/_panel/dns")({
