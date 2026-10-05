@@ -36,6 +36,33 @@ dkim_key() {
   grep -o '"[^"]*"' "$1" | tr -d '"\n\t ' | sed -n 's/.*p=\([^;]*\).*/\1/p' || true
 }
 
+# A hostname as an absolute zone-file name. Without the final dot bind appends
+# the zone: "ns1.example.com" in example.com becomes ns1.example.com.example.com.
+fqdn() {
+  printf '%s.' "${1%.}"
+}
+
+# A records for name servers inside the zone that have none, e.g.
+# ns1.example.com in example.com. Bind refuses a zone whose own name server has
+# no address. They point at the zone's apex A record; no apex A, no glue.
+#   ns_glue <zone json> <zone name>
+ns_glue() {
+  local zone="$1" zname="$2" apex ns host
+  apex="$(jq -r '[.records[]? | select(.type == "A" and .name == "@") | .value][0] // empty' <<<"$zone")"
+  ok_ipv4 "$apex" || return 0
+  while IFS= read -r ns; do
+    ns="${ns%.}"
+    case "$ns" in
+      *."$zname") host="${ns%."$zname"}" ;;
+      *) continue ;;
+    esac
+    [[ "$host" =~ ^[A-Za-z0-9-]+$ ]] || continue
+    if ! jq -e --arg h "$host" 'any(.records[]?; .type == "A" and .name == $h)' <<<"$zone" >/dev/null; then
+      echo "${host} 300 IN A ${apex}"
+    fi
+  done < <(jq -r '.records[]? | select(.type == "NS") | .value' <<<"$zone" | sort -u)
+}
+
 bind_http() {
   ip="${1:-}"
   if ok_ipv4 "$ip"; then
@@ -962,12 +989,17 @@ apply_dns() {
   mod_on dns || return 0
   [ -d /etc/bind ] || return 0
   [ "$DRY" -eq 1 ] && { log "would apply bind zones"; return; }
-  # Root writes the zones; named (user bind) reads them.
+  # Root writes the zones; named (user bind) reads them. They live under
+  # /var/lib/bind because named's AppArmor profile (Ubuntu, Debian) only lets
+  # it read zone files from its own directories.
+  local zdir=/var/lib/bind/schela
   if getent group bind >/dev/null 2>&1; then
-    install -d -m 0750 -o root -g bind /var/lib/schela/bind
+    install -d -m 0750 -o root -g bind "$zdir"
   else
-    install -d -m 0755 -o root -g root /var/lib/schela/bind
+    install -d -m 0755 -o root -g root "$zdir"
   fi
+  # Zones used to be written here, where named could not read them.
+  rm -rf /var/lib/schela/bind
   : >/etc/bind/schela-zones.conf
   while IFS= read -r zone; do
     [ -n "$zone" ] || continue
@@ -975,7 +1007,7 @@ apply_dns() {
     serial="$(jq -r '.serial' <<<"$zone")"
     ok_domain "$zname" || continue
     [[ "$serial" =~ ^[0-9]+$ ]] || serial="$(date +%Y%m%d01)"
-    zfile="/var/lib/schela/bind/${zname}.zone"
+    zfile="${zdir}/${zname}.zone"
     dkim_p=""
     [ -f "/var/lib/schela/dkim/${zname}.txt" ] && dkim_p="$(dkim_key "/var/lib/schela/dkim/${zname}.txt")"
     {
@@ -997,13 +1029,16 @@ apply_dns() {
         v="${v//\"/}"
         if [ "$t" = "MX" ]; then
           [[ "$prio" =~ ^[0-9]+$ ]] || prio=10
-          echo "${n} ${ttl} IN MX ${prio} ${v}."
+          echo "${n} ${ttl} IN MX ${prio} $(fqdn "$v")"
         elif [ "$t" = "TXT" ]; then
           echo "${n} ${ttl} IN TXT $(txt_strings "$v")"
+        elif [ "$t" = "NS" ] || [ "$t" = "CNAME" ]; then
+          echo "${n} ${ttl} IN ${t} $(fqdn "$v")"
         else
           echo "${n} ${ttl} IN ${t} ${v}"
         fi
       done < <(jq -c '.records // [] | .[]' <<<"$zone")
+      ns_glue "$zone" "$zname"
       if [ -n "$dkim_p" ]; then
         echo "mail._domainkey 300 IN TXT $(txt_strings "v=DKIM1; k=rsa; p=${dkim_p}")"
       fi
