@@ -48,7 +48,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { formatSize, virtParent, virtSegments, type FileEntry, type FileListing, type FileTarget } from "@/lib/panel/file-types";
+import { formatSize, virtParent, virtSegments, type FileEntry, type FileListing } from "@/lib/panel/file-types";
 import {
   chmodFile,
   copyFile,

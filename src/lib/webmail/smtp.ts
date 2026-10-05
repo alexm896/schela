@@ -102,6 +102,8 @@ export function buildMessage(opts: {
     `From: ${opts.from}\r\n` +
     `To: ${to}\r\n` +
     cc +
+    // Strip CR, LF and NUL so the subject cannot inject headers.
+    // eslint-disable-next-line no-control-regex
     `Subject: ${opts.subject.replace(/[\r\n\x00]+/g, " ").slice(0, 200)}\r\n` +
     `Date: ${date}\r\n` +
     `MIME-Version: 1.0\r\n` +
