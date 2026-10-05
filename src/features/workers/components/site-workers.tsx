@@ -31,14 +31,14 @@ import {
   siteWorkerLogs,
   updateSiteWorker,
   type SiteWorkerWithStatus,
-} from "@/lib/panel/site-workers";
+} from "@/features/workers/api";
 import {
   WORKER_LIMITS,
   WORKER_PRESETS,
   WORKER_PRESET_KEYS,
   parseWorkerCommand,
   type WorkerPreset,
-} from "@/lib/panel/workers";
+} from "@/features/workers/workers";
 
 type Props = {
   siteId: number;
