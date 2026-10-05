@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 // without authMiddleware fails the build instead of shipping.
 
 const SRC = fileURLToPath(new URL("..", import.meta.url));
-const WEBMAIL_DIR = "lib/webmail/";
+const WEBMAIL_DIR = "features/webmail/";
 
 /** Panel functions that must work before sign-in, and why. */
 const PUBLIC_PANEL_FNS: Record<string, string> = {
