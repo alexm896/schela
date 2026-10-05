@@ -30,19 +30,6 @@ export function assertCronCommand(raw: string): string {
   return s;
 }
 
-export function generateMailboxPassword(): string {
-  const chars = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  const bytes = new Uint8Array(16);
-  const c = globalThis.crypto;
-  if (c && typeof c.getRandomValues === "function") c.getRandomValues(bytes);
-  else {
-    for (let i = 0; i < 16; i++) bytes[i] = Math.floor(Math.random() * 256);
-  }
-  let out = "";
-  for (const b of bytes) out += chars[b % chars.length];
-  return out;
-}
-
 export const CRON_PRESETS = [
   { label: "Every minute", value: "* * * * *" },
   { label: "Every 5 minutes", value: "*/5 * * * *" },

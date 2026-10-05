@@ -5,7 +5,7 @@ import { logActivity } from "@/server/activity";
 import { applyAfterChange } from "@/server/apply";
 import { getSql } from "@/server/db";
 import { normalizeDomain } from "@/lib/utils";
-import { ensureHostDns } from "@/lib/panel/dns-auto";
+import { ensureHostDns } from "@/features/dns/records";
 import { mapSite } from "./map";
 import { normalizeWebRoot, siteRootFor, webRootFromRoot } from "./site-root";
 import { systemUserFromDomain } from "./sites";
