@@ -29,7 +29,7 @@ import {
   deleteFirewallRule,
   listFirewall,
   toggleFirewallRule,
-} from "@/lib/panel/server";
+} from "@/features/firewall/api";
 
 export const Route = createFileRoute("/_panel/firewall")({
   loader: () => listFirewall(),

@@ -3,7 +3,7 @@ import { RedirectToSignIn } from "@/auth/gates";
 import { useCurrentUserState } from "@/auth/use-current-user";
 import { Shell } from "@/components/layout/shell";
 import { sessionUser } from "@/auth/api";
-import { getPanelState } from "@/lib/panel/server";
+import { getPanelState } from "@/features/settings/api";
 
 export const Route = createFileRoute("/_panel")({
   loader: async () => {

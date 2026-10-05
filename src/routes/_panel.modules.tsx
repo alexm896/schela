@@ -5,7 +5,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
-import { listModules, toggleModule } from "@/lib/panel/server";
+import { listModules, toggleModule } from "@/features/modules/api";
 
 export const Route = createFileRoute("/_panel/modules")({
   loader: () => listModules(),
