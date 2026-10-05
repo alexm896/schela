@@ -30,7 +30,7 @@ import {
   type DatabasesOverview,
   type DatabaseWithSize,
   type IssuedCredentials,
-} from "@/lib/panel/databases-api";
+} from "@/features/databases/api";
 import {
   ACCESS_LEVELS,
   ACCESS_LEVEL_KEYS,
@@ -41,8 +41,8 @@ import {
   normalizeDatabaseName,
   type AccessLevel,
   type DatabaseEngine,
-} from "@/lib/panel/databases";
-import type { DatabaseUser } from "@/lib/panel/types";
+} from "@/features/databases/databases";
+import type { DatabaseUser } from "@/features/databases/types";
 
 function errorText(err: unknown, fallback: string) {
   return err instanceof Error ? err.message : fallback;

@@ -2,7 +2,7 @@ import { Link } from "@tanstack/react-router";
 import { Database, Plus } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { CredentialsDialog, NewDatabaseDialog } from "@/components/database-dialogs";
+import { CredentialsDialog, NewDatabaseDialog } from "@/features/databases/components/database-dialogs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -10,14 +10,14 @@ import {
   getDatabases,
   type DatabasesOverview,
   type IssuedCredentials,
-} from "@/lib/panel/databases-api";
+} from "@/features/databases/api";
 import {
   ACCESS_LEVELS,
   DATABASE_ENGINES,
   enabledEngines,
   formatDatabaseSize,
   suggestDatabaseName,
-} from "@/lib/panel/databases";
+} from "@/features/databases/databases";
 
 export function SiteDatabasesCard({ siteId, domain }: { siteId: number; domain: string }) {
   const [overview, setOverview] = useState<DatabasesOverview | null>(null);

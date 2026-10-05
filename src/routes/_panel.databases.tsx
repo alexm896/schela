@@ -9,7 +9,7 @@ import {
   DeleteDatabaseUserDialog,
   LinkDatabaseDialog,
   NewDatabaseDialog,
-} from "@/components/database-dialogs";
+} from "@/features/databases/components/database-dialogs";
 import { PageHeader } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -25,14 +25,14 @@ import {
   resetDatabaseUserPassword,
   type DatabaseWithSize,
   type IssuedCredentials,
-} from "@/lib/panel/databases-api";
+} from "@/features/databases/api";
 import {
   ACCESS_LEVELS,
   DATABASE_ENGINES,
   enabledEngines,
   formatDatabaseSize,
-} from "@/lib/panel/databases";
-import type { DatabaseUser } from "@/lib/panel/types";
+} from "@/features/databases/databases";
+import type { DatabaseUser } from "@/features/databases/types";
 
 export const Route = createFileRoute("/_panel/databases")({
   loader: () => getDatabases(),

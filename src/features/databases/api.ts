@@ -14,7 +14,7 @@ import {
   type DatabaseEngine,
   type GrantInput,
 } from "./databases";
-import { databasePasswordHash, generateDatabasePassword } from "./db-pass";
+import { databasePasswordHash, generateDatabasePassword } from "./password";
 import { mapDatabase, mapDatabaseUser } from "./map";
 import { runSudoHelper } from "@/server/sudo-helper";
 import type { DatabaseUser, ManagedDatabase } from "./types";

@@ -13,7 +13,7 @@ import {
   generateDatabasePassword,
   mariadbPasswordHash,
   scramSha256Verifier,
-} from "./db-pass.ts";
+} from "./password.ts";
 
 describe("normalizeDatabaseName", () => {
   it("accepts lowercase identifiers and lowercases input", () => {
