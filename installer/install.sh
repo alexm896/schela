@@ -181,8 +181,8 @@ id -u schela >/dev/null 2>&1 || useradd --system --home /var/lib/schela --shell 
 id -u schelawww >/dev/null 2>&1 || useradd --system --home /nonexistent --shell /usr/sbin/nologin schelawww
 id -u vmail >/dev/null 2>&1 || useradd --system --home /var/mail/schela --shell /usr/sbin/nologin vmail
 install -d -m 0750 -o schela -g schela /var/lib/schela /var/lib/schela/pglite /var/lib/schela/apps /var/lib/schela/logs
-# Written by schela-apply as root and read by postfix and bind, never by the panel.
-install -d -m 0755 -o root -g root /var/lib/schela/mail /var/lib/schela/bind
+# Written by schela-apply as root and read by postfix, never by the panel.
+install -d -m 0755 -o root -g root /var/lib/schela/mail
 install -d -m 0755 /opt/schela /etc/nginx/schela.d /etc/nginx/schela-apps.d
 install -d -m 0750 -o vmail -g vmail /var/mail/schela
 
@@ -275,11 +275,11 @@ if [ -d /opt/schela/.output/server ]; then
     done
   fi
 fi
-# The panel owns its data. mail, bind, dkim and db are root's (schela-apply):
-# postfix, bind and opendkim read them, and dkim and db hold secrets.
+# The panel owns its data. mail, dkim and db are root's (schela-apply):
+# postfix and opendkim read them, and dkim and db hold secrets.
 chown schela:schela /var/lib/schela
 find /var/lib/schela -mindepth 1 -maxdepth 1 \
-  ! -name mail ! -name bind ! -name dkim ! -name db \
+  ! -name mail ! -name dkim ! -name db \
   -exec chown -R schela:schela {} +
 chown -R schela:schela /opt/schela
 

@@ -1,15 +1,17 @@
 #!/bin/bash
-# txt_strings and dkim_key from schela-apply, without a server.
-# Run anywhere: bash installer/test/txt-dkim.sh
+# Zone-file helpers from schela-apply (txt_strings, dkim_key, fqdn, ns_glue),
+# without a server. Needs bash and jq.
+# Run anywhere: bash installer/test/dns-zone.sh
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 fail() { printf 'FAIL %s\n' "$*" >&2; exit 1; }
 pass() { printf 'ok   %s\n' "$*"; }
 
-# Load only the two helpers; running schela-apply itself would apply state.
+# Load only the helpers; running schela-apply itself would apply state.
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
-sed -n '/^txt_strings() {/,/^}/p; /^dkim_key() {/,/^}/p' "$ROOT/installer/schela-apply" >"$TMP/helpers.sh"
+sed -n '/^ok_ipv4()/p; /^txt_strings() {/,/^}/p; /^dkim_key() {/,/^}/p; /^fqdn() {/,/^}/p; /^ns_glue() {/,/^}/p' \
+  "$ROOT/installer/schela-apply" >"$TMP/helpers.sh"
 # shellcheck source=/dev/null
 source "$TMP/helpers.sh"
 
@@ -37,4 +39,23 @@ printf 'nothing here\n' >"$TMP/empty.txt"
 [ -z "$(dkim_key "$TMP/empty.txt")" ] || fail "no key"
 pass "a file without a key gives nothing and does not fail"
 
-echo "all txt/dkim checks passed"
+echo "== fqdn"
+[ "$(fqdn "ns1.example.com")" = "ns1.example.com." ] || fail "adds the dot"
+[ "$(fqdn "ns1.example.com.")" = "ns1.example.com." ] || fail "keeps one dot"
+pass "always exactly one final dot"
+
+echo "== ns_glue"
+zone='{"records":[
+  {"type":"A","name":"@","value":"203.0.113.10"},
+  {"type":"NS","name":"@","value":"ns1.example.com"},
+  {"type":"NS","name":"@","value":"ns2.example.com."},
+  {"type":"NS","name":"@","value":"ns.other.net"},
+  {"type":"A","name":"ns2","value":"203.0.113.20"}]}'
+glue="$(ns_glue "$zone" "example.com")"
+[ "$glue" = "ns1 300 IN A 203.0.113.10" ] || fail "glue: $glue"
+pass "in-zone NS without an A gets one at the apex IP; others are left alone"
+
+[ -z "$(ns_glue '{"records":[{"type":"NS","name":"@","value":"ns1.example.com"}]}' "example.com")" ] || fail "no apex"
+pass "no apex A, no glue"
+
+echo "all zone helper checks passed"
