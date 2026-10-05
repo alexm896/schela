@@ -1,7 +1,7 @@
 import { pendingMigrations } from "../../scripts/migration-plan.mjs";
 
 /** Which database backend is active. */
-export type DbSource = "neon" | "pglite";
+export type DbSource = "postgres" | "pglite";
 
 // An empty/whitespace DATABASE_URL (an easy misconfig in deploy UIs) must mean
 // "unset" — otherwise production would silently run on the PGLite fallback.
@@ -14,12 +14,12 @@ const databaseUrl =
  * Active backend: embedded **PGLite** (Postgres compiled to WASM), the panel's
  * database. The installer persists it at `SCHELA_DATA_DIR`; without that it is
  * in memory (local dev). Setting `DATABASE_URL` uses an external Postgres
- * instead (the "neon" path) with no code changes.
+ * instead (the "postgres" path) with no code changes.
  */
-export const dbSource: DbSource = databaseUrl ? "neon" : "pglite";
+export const dbSource: DbSource = databaseUrl ? "postgres" : "pglite";
 
 /**
- * Minimal shared SQL surface, satisfied by both Neon and PGLite. Both the
+ * Minimal shared SQL surface, satisfied by both external Postgres and PGLite. Both the
  * tagged-template and `.query()` forms resolve to an array of row objects:
  *
  *   const sql = await getSql();
@@ -85,10 +85,9 @@ function toSql(run: Run): Sql {
   return sql;
 }
 
-function createNeonSql(): Promise<Sql> {
+function createPostgresSql(): Promise<Sql> {
   globalRef.__pgSqlPromise__ ??= (async () => {
-    // Regular Postgres driver: node-postgres (`pg`) — works directly with Neon's
-    // pooled endpoint. One pool per process; warm serverless instances reuse it.
+    // Regular Postgres driver: node-postgres (`pg`). One pool per process.
     const { Pool, types } = await import("pg");
     types.setTypeParser(OID_INT8, Number);
     types.setTypeParser(OID_DATE, identity);
@@ -106,7 +105,7 @@ function createNeonSql(): Promise<Sql> {
 }
 
 async function createPgliteSql(): Promise<Sql> {
-  // Embedded Postgres, imported on demand so it never loads on the Neon path.
+  // Embedded Postgres, imported on demand so it never loads when DATABASE_URL is set.
   // One instance per process, shared across HMR module instances. On disk at
   // SCHELA_DATA_DIR when set; otherwise in memory, reset on dev-server restart.
   globalRef.__pgliteInstance__ ??= (async () => {
@@ -182,11 +181,11 @@ async function createSql(): Promise<Sql> {
         "or a server route loader, never from client code.",
     );
   }
-  return dbSource === "neon" ? createNeonSql() : createPgliteSql();
+  return dbSource === "postgres" ? createPostgresSql() : createPgliteSql();
 }
 
 /**
- * Get the shared, **server-only** SQL client. Neon when `DATABASE_URL` is set,
+ * Get the shared, **server-only** SQL client. External Postgres when `DATABASE_URL` is set,
  * otherwise the local PGLite fallback. Memoized — safe to call per request.
  *
  * Schema comes from `migrations/*.sql`, auto-applied before the first query on
@@ -203,7 +202,7 @@ export function getSql(): Promise<Sql> {
 /**
  * The shared PGLite instance, with `migrations/*.sql` applied. Lets Better Auth
  * persist to the same embedded DB as panel data (via a Kysely dialect). Throws
- * when `DATABASE_URL` is set (that path uses Neon).
+ * when `DATABASE_URL` is set (that path uses external Postgres).
  */
 export async function getPglite(): Promise<import("@electric-sql/pglite").PGlite> {
   if (dbSource !== "pglite") {
@@ -220,7 +219,7 @@ export async function getPglite(): Promise<import("@electric-sql/pglite").PGlite
  *
  * - **PGLite** (no `DATABASE_URL`): open the DB and apply
  *   `migrations/*.sql`. Idempotent — concurrent callers share one promise.
- * - **Neon**: no-op (pool is created lazily on first query).
+ * - **External Postgres**: no-op (pool is created lazily on first query).
  *
  * Vite `configureServer` awaits this at dev startup; production imports of this
  * module kick it off immediately (see bottom of file).
