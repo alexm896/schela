@@ -1,4 +1,5 @@
 import { createFileRoute, useRouter } from "@tanstack/react-router";
+import { useState } from "react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
@@ -14,6 +15,32 @@ export const Route = createFileRoute("/_panel/modules")({
 function ModulesPage() {
   const modules = Route.useLoaderData();
   const router = useRouter();
+  // Module id -> the state the user asked for, while the change is applied.
+  const [pending, setPending] = useState<Record<number, boolean>>({});
+
+  async function toggle(id: number, slug: string, enabled: boolean) {
+    setPending((prev) => ({ ...prev, [id]: enabled }));
+    try {
+      await toggleModule({ data: { id, enabled } });
+      if (slug === "redis" && enabled) {
+        toast.success("Redis will install and start. It also starts after reboot");
+      }
+      if (slug === "redis" && !enabled) {
+        toast.message("Redis stopped. Package stays; it will not start on reboot");
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed");
+    } finally {
+      // The row is saved before schela-apply runs, so reload even when the
+      // apply failed; otherwise the page keeps showing the old state.
+      await router.invalidate();
+      setPending((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+    }
+  }
 
   return (
     <div>
@@ -35,22 +62,10 @@ function ModulesPage() {
                 <p className="mt-2 text-sm text-muted-foreground">{mod.description}</p>
               </div>
               <Switch
-                checked={mod.enabled}
-                onCheckedChange={(v) =>
-                  void toggleModule({ data: { id: mod.id, enabled: v } })
-                    .then(() => {
-                      if (mod.slug === "redis" && v) {
-                        toast.success("Redis will install and start — it also starts after reboot");
-                      }
-                      if (mod.slug === "redis" && !v) {
-                        toast.message("Redis stopped. Package stays; it will not start on reboot");
-                      }
-                      return router.invalidate();
-                    })
-                    .catch((err: unknown) =>
-                      toast.error(err instanceof Error ? err.message : "Failed"),
-                    )
-                }
+                checked={pending[mod.id] ?? mod.enabled}
+                disabled={mod.id in pending}
+                aria-label={`${mod.name} module`}
+                onCheckedChange={(v) => void toggle(mod.id, mod.slug, v)}
               />
             </CardContent>
           </Card>
