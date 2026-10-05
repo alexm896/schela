@@ -7,7 +7,7 @@ fail() { printf 'FAIL %s\n' "$*" >&2; exit 1; }
 pass() { printf 'ok   %s\n' "$*"; }
 
 echo "== syntax"
-python3 -m py_compile "$INS/schela-files" "$INS/schela-backup" "$INS/schela-workers" "$INS/schela-db"
+python3 -m py_compile "$INS/schela-files" "$INS/schela-backup" "$INS/schela-workers" "$INS/schela-db" "$INS/schela-purge"
 bash -n "$INS/schela-apply"
 bash -n "$INS/schela"
 bash -n "$INS/install.sh"
@@ -25,6 +25,9 @@ pass "sudoers allows schela-workers"
 grep -qx 'schela ALL=(root) NOPASSWD: /usr/local/sbin/schela-db ""' "$INS/templates/sudoers" \
   || fail "sudoers must allow schela-db with no arguments only"
 pass "sudoers pins schela-db to no arguments"
+grep -qx 'schela ALL=(root) NOPASSWD: /usr/local/sbin/schela-purge ""' "$INS/templates/sudoers" \
+  || fail "sudoers must allow schela-purge with no arguments only"
+pass "sudoers pins schela-purge to no arguments"
 
 echo "== schela-files jail"
 id -u s_demo >/dev/null 2>&1 || useradd --home /home/s_demo --create-home --shell /usr/sbin/nologin s_demo
@@ -505,5 +508,35 @@ done
 unset SCHELA_SYSTEMD_DIR
 
 bash "$ROOT/installer/test/databases.sh"
+bash "$ROOT/installer/test/dns-zone.sh"
+bash "$ROOT/installer/test/purge.sh"
+
+echo "== schela-purge account"
+export SCHELA_STATE=/tmp/schela-purge-state.json
+printf '%s\n' '{"sites":[{"systemUser":"s_purge_kept"}],"apps":[]}' >"$SCHELA_STATE"
+id -u www-data >/dev/null 2>&1 || useradd --system --no-create-home www-data
+for u in s_purge_gone s_purge_kept; do
+  id -u "$u" >/dev/null 2>&1 || useradd --home "/home/$u" --create-home --shell /usr/sbin/nologin "$u"
+  usermod -aG "$u" www-data
+done
+printf 'site\n' >/home/s_purge_gone/index.php
+mkdir -p /var/lib/schela/apps && printf 'PORT=1\n' >/var/lib/schela/apps/s_purge_gone.env
+out="$(printf '%s' '{"op":"account","user":"s_purge_gone"}' | python3 "$INS/schela-purge")"
+grep -q '"ok": true' <<<"$out" || fail "purge account: $out"
+! id -u s_purge_gone >/dev/null 2>&1 || fail "purged user still exists"
+! getent group s_purge_gone >/dev/null || fail "purged user's group still exists"
+[ ! -e /home/s_purge_gone ] || fail "purged user's home still exists"
+[ ! -e /var/lib/schela/apps/s_purge_gone.env ] || fail "purged app env file still exists"
+pass "removes the user, its group (even with www-data in it), home and env file"
+out="$(printf '%s' '{"op":"account","user":"s_purge_kept"}' | python3 "$INS/schela-purge" || true)"
+grep -q 'still belongs' <<<"$out" || fail "purged a user still in the state: $out"
+id -u s_purge_kept >/dev/null 2>&1 && [ -d /home/s_purge_kept ] || fail "kept user was touched"
+pass "refuses a user that still belongs to a site"
+[ ! -e /var/lib/schela/state.json ] || fail "test needs no state at /var/lib/schela/state.json"
+out="$(printf '%s' '{"op":"maildir","address":"x@purge.test"}' | SUDO_USER=schela python3 "$INS/schela-purge" || true)"
+grep -q 'Panel state is not readable' <<<"$out" || fail "purge honoured SCHELA_STATE under sudo: $out"
+pass "ignores SCHELA_STATE when run through sudo"
+userdel --remove s_purge_kept 2>/dev/null || true
+unset SCHELA_STATE
 
 echo "== all installer security tests passed"
