@@ -7,7 +7,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { getAdminIdentity, getPanelState, updateAdminIdentity, updateSettings } from "@/lib/panel/server";
+import { getAdminIdentity, updateAdminIdentity } from "@/auth/api";
+import { getPanelState, updateSettings } from "@/lib/panel/server";
 import { NODE_VERSIONS, PHP_VERSIONS } from "@/lib/panel/types";
 
 export const Route = createFileRoute("/_panel/settings")({
