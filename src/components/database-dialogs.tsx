@@ -364,7 +364,7 @@ export function DatabaseUserDialog({
           <DialogTitle>{user ? `Access for ${user.name}` : "New database user"}</DialogTitle>
           <DialogDescription>
             {user
-              ? "Changes apply to new connections; open sessions keep their old rights until they reconnect."
+              ? "Applies right away to new connections. An app that is already connected may keep its old rights until it reconnects."
               : "A login for apps or people. The password is shown once, right after you create it."}
           </DialogDescription>
         </DialogHeader>
