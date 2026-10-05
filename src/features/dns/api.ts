@@ -1,11 +1,13 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { authMiddleware } from "@/auth/middleware";
+import { assertConfirmed } from "@/lib/removal";
 import { logActivity } from "@/server/activity";
 import { applyAfterChange } from "@/server/apply";
 import { getSql } from "@/server/db";
 import { dnsRecordIp, isVpsApply } from "@/server/env";
 import { mapRecord, mapZone } from "./map";
+import { zoneById, zoneRemovalPlan } from "./removal";
 
 export const listDns = createServerFn({ method: "GET" })
   .middleware([authMiddleware])
@@ -78,4 +80,26 @@ export const deleteDnsRecord = createServerFn({ method: "POST" })
     await sql`delete from dns_records where id = ${data.id}`;
     await applyAfterChange(sql);
     return { ok: true };
+  });
+
+export const getZoneRemoval = createServerFn({ method: "GET" })
+  .middleware([authMiddleware])
+  .validator(z.object({ id: z.number() }))
+  .handler(async ({ data }) => {
+    const sql = await getSql();
+    return zoneRemovalPlan(sql, await zoneById(sql, data.id));
+  });
+
+export const deleteDnsZone = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .validator(z.object({ id: z.number(), confirm: z.string().max(255) }))
+  .handler(async ({ data }) => {
+    const sql = await getSql();
+    const zone = await zoneById(sql, data.id);
+    assertConfirmed(await zoneRemovalPlan(sql, zone), data.confirm);
+    // Its records go with it (on delete cascade).
+    await sql`delete from dns_zones where id = ${zone.id}`;
+    await logActivity(sql, "dns", `Removed zone ${zone.name}`);
+    await applyAfterChange(sql);
+    return { ok: true as const };
   });

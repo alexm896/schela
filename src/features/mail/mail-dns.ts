@@ -1,7 +1,7 @@
 // The DNS records a mail domain needs (MX, SPF, DMARC, DKIM), kept in the
 // panel's own zones whenever a mailbox is created.
 
-import { ensureZone, upsertRecord } from "@/features/dns/records";
+import { deleteRecords, ensureZone, upsertRecord, zoneByName } from "@/features/dns/records";
 import type { Sql } from "@/server/db";
 import { dnsRecordIp } from "@/server/env";
 import { mailboxDomain } from "./mail";
@@ -80,4 +80,32 @@ export async function describeMailDns(
     };
   });
   return { domain, records };
+}
+
+/** The records ensureMailDns wrote for a domain; other TXT records on @ are not mail's. */
+async function mailDnsRecords(
+  sql: Sql,
+  domain: string,
+): Promise<{ zoneId: number; records: { id: number; label: string }[] } | null> {
+  const zone = await zoneByName(sql, domain);
+  if (!zone) return null;
+  const rows = await sql<{ id: number; type: string; name: string; value: string }>`
+    select id, type, name, value from dns_records where zone_id = ${zone.id} order by id
+  `;
+  const blueprint = mailDnsBlueprint(domain, "");
+  const records = rows
+    .filter((r) => blueprint.some((b) => b.type === r.type && b.name === r.name))
+    .filter((r) => !(r.type === "TXT" && r.name === "@" && !r.value.startsWith("v=spf1")))
+    .map((r) => ({ id: Number(r.id), label: `${r.type} ${r.name === "@" ? domain : `${r.name}.${domain}`}` }));
+  return { zoneId: zone.id, records };
+}
+
+export async function mailDnsLabels(sql: Sql, domain: string): Promise<string[]> {
+  return (await mailDnsRecords(sql, domain))?.records.map((r) => r.label) ?? [];
+}
+
+/** Undoes ensureMailDns. The zone and its other records stay. */
+export async function removeMailDns(sql: Sql, domain: string): Promise<void> {
+  const found = await mailDnsRecords(sql, domain);
+  if (found) await deleteRecords(sql, found.zoneId, found.records.map((r) => r.id));
 }

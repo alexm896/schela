@@ -1,0 +1,216 @@
+#!/usr/bin/env python3
+"""Remove the data the panel leaves behind on purpose. JSON on stdin, JSON on stdout.
+
+Deleting a site, app, mailbox or backup job in the panel only removes its
+configuration. When the admin also asks for its data to go, the panel runs this
+helper through sudo (no arguments allowed):
+
+  {"op": "account", "user": "s_shop_example"}
+      The system user of a deleted site or app, with its home directory.
+  {"op": "maildir", "address": "hello@example.com"}
+      The messages of a deleted mailbox.
+  {"op": "backups", "jobId": 3}
+      The archives and run history of a deleted backup job.
+
+Each op refuses anything still in the panel state: the panel deletes the row and
+applies first, so whatever is still listed there is in use.
+"""
+from __future__ import annotations
+
+import json
+import os
+import pwd
+import re
+import shutil
+import subprocess
+import sys
+from typing import Any
+
+UNDER_SUDO = "SUDO_USER" in os.environ
+
+
+def setting(name: str, default: str) -> str:
+    # Under sudo the caller never chooses paths (sudo also resets env).
+    return default if UNDER_SUDO else os.environ.get(name, default)
+
+
+STATE = setting("SCHELA_STATE", "/var/lib/schela/state.json")
+MAIL_ROOT = os.path.normpath(setting("SCHELA_MAIL_ROOT", "/var/mail/schela"))
+BACKUP_ROOT = os.path.normpath(setting("SCHELA_BACKUP_ROOT", "/var/lib/schela/backups"))
+APP_ENV_DIR = "/var/lib/schela/apps"
+
+# Site users are s_<domain slug>, app users sa_<name slug> (see schela-apply).
+USER_RE = re.compile(r"(s|sa)_[a-z0-9_-]{1,30}")
+ADDRESS_RE = re.compile(r"([a-z0-9._+-]+)@([a-z0-9-]+(\.[a-z0-9-]+)+)")
+# Lowest UID useradd hands to a regular user; system accounts sit below.
+MIN_UID = 1000
+
+
+class PurgeError(Exception):
+    pass
+
+
+def fail(msg: str, code: int = 1) -> None:
+    sys.stdout.write(json.dumps({"ok": False, "error": msg}) + "\n")
+    raise SystemExit(code)
+
+
+def load_state() -> dict[str, Any]:
+    try:
+        with open(STATE, encoding="utf-8") as fh:
+            state = json.load(fh)
+    except (OSError, ValueError) as exc:
+        raise PurgeError("Panel state is not readable") from exc
+    if not isinstance(state, dict):
+        raise PurgeError("Panel state is not readable")
+    return state
+
+
+def items(state: dict[str, Any], key: str) -> list[dict[str, Any]]:
+    value = state.get(key)
+    return [x for x in value if isinstance(x, dict)] if isinstance(value, list) else []
+
+
+def app_user(name: str) -> str:
+    """The same name schela-apply gives an app's system user."""
+    slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+    return f"sa_{slug[:20]}"
+
+
+def users_in_use(state: dict[str, Any]) -> set[str]:
+    used = {str(s.get("systemUser") or "") for s in items(state, "sites")}
+    used |= {app_user(str(a.get("name") or "")) for a in items(state, "apps")}
+    return used - {""}
+
+
+def remove_tree(path: str, root: str) -> bool:
+    """Delete `path` if it is a real directory directly under `root`."""
+    name = os.path.basename(path)
+    if (
+        name in ("", ".", "..")
+        or os.path.normpath(path) != path
+        or os.path.dirname(path) != root
+        or os.path.islink(path)
+    ):
+        raise PurgeError(f"Refusing to remove {path}")
+    if not os.path.isdir(path):
+        return False
+    shutil.rmtree(path)
+    return True
+
+
+# --- ops ---------------------------------------------------------------------
+
+
+def op_account(state: dict[str, Any], req: dict[str, Any]) -> dict[str, Any]:
+    user = str(req.get("user") or "")
+    if not USER_RE.fullmatch(user):
+        raise PurgeError("Not a site or app user")
+    if user in users_in_use(state):
+        raise PurgeError(f"{user} still belongs to a site or app")
+    try:
+        pw = pwd.getpwnam(user)
+    except KeyError:
+        pw = None
+    if pw is not None:
+        if pw.pw_uid < MIN_UID:
+            raise PurgeError(f"{user} is a system account")
+        if pw.pw_dir != f"/home/{user}":
+            raise PurgeError(f"{user} does not live in /home/{user}")
+        # Nothing may keep running as a user that is about to disappear.
+        subprocess.run(["pkill", "-KILL", "-u", user], check=False)
+        # nginx joins each site group; userdel keeps a group that has members.
+        subprocess.run(["gpasswd", "-d", "www-data", user], check=False, capture_output=True)
+        done = subprocess.run(["userdel", "--remove", user], check=False, capture_output=True, text=True)
+        # 12: the home could not be removed; it is removed below either way.
+        if done.returncode not in (0, 12):
+            raise PurgeError(done.stderr.strip() or f"userdel exited {done.returncode}")
+    # userdel normally took the home already; this covers an account that was
+    # gone while its home was not.
+    remove_tree(f"/home/{user}", "/home")
+    env_file = os.path.join(APP_ENV_DIR, f"{user}.env")
+    if os.path.isfile(env_file):
+        os.unlink(env_file)
+    return {"ok": True, "user": user}
+
+
+def op_maildir(state: dict[str, Any], req: dict[str, Any]) -> dict[str, Any]:
+    address = str(req.get("address") or "").lower()
+    m = ADDRESS_RE.fullmatch(address)
+    if not m:
+        raise PurgeError("Not a mailbox address")
+    if address in {str(b.get("address") or "").lower() for b in items(state, "mailboxes")}:
+        raise PurgeError(f"{address} is still a mailbox")
+    local, domain = m.group(1), m.group(2)
+    domain_dir = os.path.join(MAIL_ROOT, domain)
+    removed = remove_tree(os.path.join(domain_dir, local), domain_dir) if os.path.isdir(domain_dir) else False
+    # Drop the domain folder once its last mailbox is gone.
+    if os.path.isdir(domain_dir) and not os.path.islink(domain_dir) and not os.listdir(domain_dir):
+        os.rmdir(domain_dir)
+    return {"ok": True, "address": address, "removed": removed}
+
+
+def op_backups(state: dict[str, Any], req: dict[str, Any]) -> dict[str, Any]:
+    job_id = req.get("jobId")
+    if not isinstance(job_id, int) or isinstance(job_id, bool) or job_id < 1:
+        raise PurgeError("Not a backup job")
+    if job_id in {b.get("id") for b in items(state, "backups")}:
+        raise PurgeError(f"Backup job {job_id} still exists")
+    # Archives live in <root>/<id>-<name slug>/ (see schela-backup).
+    folder = re.compile(rf"{job_id}-[a-z0-9-]+")
+    removed = []
+    if os.path.isdir(BACKUP_ROOT):
+        for name in sorted(os.listdir(BACKUP_ROOT)):
+            if folder.fullmatch(name) and remove_tree(os.path.join(BACKUP_ROOT, name), BACKUP_ROOT):
+                removed.append(name)
+    history = os.path.join(BACKUP_ROOT, "history.jsonl")
+    if os.path.isfile(history) and not os.path.islink(history):
+        with open(history, encoding="utf-8") as fh:
+            lines = fh.readlines()
+        keep = [line for line in lines if not _run_of(line, job_id)]
+        if len(keep) != len(lines):
+            tmp = history + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                fh.writelines(keep)
+            os.replace(tmp, history)
+    return {"ok": True, "jobId": job_id, "removed": removed}
+
+
+def _run_of(line: str, job_id: int) -> bool:
+    try:
+        row = json.loads(line)
+    except ValueError:
+        return False
+    return isinstance(row, dict) and row.get("jobId") == job_id
+
+
+OPS = {"account": op_account, "maildir": op_maildir, "backups": op_backups}
+
+
+def main() -> None:
+    if len(sys.argv) > 1:
+        if sys.argv[1] in ("-h", "--help"):
+            sys.stdout.write("schela-purge  (JSON on stdin) ops: " + " ".join(OPS) + "\n")
+            return
+        fail("Unknown command")
+    try:
+        raw = sys.stdin.read(65536)
+        req = json.loads(raw) if raw.strip() else {}
+    except ValueError:
+        fail("Invalid JSON")
+    if not isinstance(req, dict):
+        fail("Invalid request")
+    op = OPS.get(str(req.get("op") or ""))
+    if op is None:
+        fail("Unknown op")
+    try:
+        out = op(load_state(), req)
+        sys.stdout.write(json.dumps(out) + "\n")
+    except PurgeError as exc:
+        fail(str(exc))
+    except OSError as exc:
+        fail(str(exc) or exc.__class__.__name__)
+
+
+if __name__ == "__main__":
+    main()

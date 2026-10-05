@@ -23,8 +23,6 @@ import { Switch } from "@/components/ui/switch";
 import {
   createDatabase,
   createDatabaseUser,
-  deleteDatabase,
-  deleteDatabaseUser,
   updateDatabase,
   updateDatabaseUser,
   type DatabasesOverview,
@@ -529,109 +527,6 @@ export function CredentialsDialog({ issued, onClose }: { issued: IssuedCredentia
         </div>
         <DialogFooter>
           <Button onClick={onClose}>I saved it</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-export function DeleteDatabaseDialog({
-  database,
-  onClose,
-  onDeleted,
-}: {
-  database: DatabaseWithSize;
-  onClose: () => void;
-  onDeleted: () => void;
-}) {
-  const [confirm, setConfirm] = useState("");
-  const [busy, setBusy] = useState(false);
-
-  async function submit() {
-    setBusy(true);
-    try {
-      await deleteDatabase({ data: { id: database.id, confirm } });
-      onDeleted();
-    } catch (err) {
-      toast.error(errorText(err, "Could not delete the database"));
-      setBusy(false);
-    }
-  }
-
-  return (
-    <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Delete {database.name}?</DialogTitle>
-          <DialogDescription>
-            The database and all its data are removed from the server. Users stay but lose access to
-            it. This cannot be undone.
-          </DialogDescription>
-        </DialogHeader>
-        <div className="grid gap-2">
-          <Label htmlFor="database-confirm">
-            Type <span className="font-mono text-foreground">{database.name}</span> to confirm
-          </Label>
-          <Input
-            id="database-confirm"
-            value={confirm}
-            onChange={(e) => setConfirm(e.target.value)}
-            className="font-mono text-sm"
-            spellCheck={false}
-            autoComplete="off"
-          />
-        </div>
-        <DialogFooter>
-          <Button variant="ghost" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button variant="destructive" disabled={busy || confirm !== database.name} onClick={() => void submit()}>
-            {busy ? "Deleting…" : "Delete database"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-export function DeleteDatabaseUserDialog({
-  user,
-  onClose,
-  onDeleted,
-}: {
-  user: DatabaseUser;
-  onClose: () => void;
-  onDeleted: () => void;
-}) {
-  const [busy, setBusy] = useState(false);
-
-  async function submit() {
-    setBusy(true);
-    try {
-      await deleteDatabaseUser({ data: { id: user.id } });
-      onDeleted();
-    } catch (err) {
-      toast.error(errorText(err, "Could not delete the user"));
-      setBusy(false);
-    }
-  }
-
-  return (
-    <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Delete user {user.name}?</DialogTitle>
-          <DialogDescription>
-            Apps that log in as {user.name} stop working. The databases and their data stay.
-          </DialogDescription>
-        </DialogHeader>
-        <DialogFooter>
-          <Button variant="ghost" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button variant="destructive" disabled={busy} onClick={() => void submit()}>
-            {busy ? "Deleting…" : "Delete user"}
-          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

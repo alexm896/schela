@@ -2,6 +2,7 @@ import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import { Inbox, Mail, Plus } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -9,6 +10,7 @@ import {
   checkMailDns,
   createMailbox,
   deleteMailbox,
+  getMailboxRemoval,
   listMailDns,
   listMailboxes,
   setMailboxPassword,
@@ -19,6 +21,7 @@ import { MailboxCard } from "@/features/mail/components/mailbox-card";
 import { MailboxPasswordDialog } from "@/features/mail/components/mailbox-password-dialog";
 import { NewMailboxDialog, type NewMailboxDraft } from "@/features/mail/components/new-mailbox-dialog";
 import type { DnsCheckResult } from "@/features/mail/dns-check";
+import { notifyRemoved } from "@/lib/notify";
 
 export const Route = createFileRoute("/_panel/mail")({
   loader: async () => {
@@ -43,6 +46,7 @@ function MailPage() {
   const [pwValue, setPwValue] = useState("");
   const [checks, setChecks] = useState<Record<string, DnsCheckResult>>({});
   const [checking, setChecking] = useState<string | null>(null);
+  const [removing, setRemoving] = useState<{ id: number; address: string } | null>(null);
 
   async function onCreate() {
     if (draft.password !== draft.confirm) {
@@ -160,9 +164,7 @@ function MailPage() {
                   data: { id: box.id, status: v ? "active" : "disabled" },
                 }).then(() => router.invalidate())
               }
-              onRemove={() =>
-                void deleteMailbox({ data: { id: box.id } }).then(() => router.invalidate())
-              }
+              onRemove={() => setRemoving({ id: box.id, address: box.address })}
             />
           ))}
         </div>
@@ -185,6 +187,21 @@ function MailPage() {
         onClose={() => setPwBox(null)}
         onSave={() => void onSetPassword()}
       />
+
+      {removing ? (
+        <ConfirmDeleteDialog
+          title={`Remove ${removing.address}?`}
+          description="The mailbox stops receiving mail and can no longer sign in."
+          confirmLabel="Remove mailbox"
+          loadPlan={() => getMailboxRemoval({ data: { id: removing.id } })}
+          onConfirm={async ({ remove }) => {
+            const { warnings } = await deleteMailbox({ data: { id: removing.id, remove } });
+            notifyRemoved(`Removed ${removing.address}`, warnings);
+            await router.invalidate();
+          }}
+          onClose={() => setRemoving(null)}
+        />
+      ) : null}
     </div>
   );
 }
