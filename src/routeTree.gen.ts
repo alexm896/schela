@@ -17,6 +17,7 @@ import { Route as PanelIndexRouteImport } from './routes/_panel.index'
 import { Route as PanelAppsRouteImport } from './routes/_panel.apps'
 import { Route as PanelBackupsRouteImport } from './routes/_panel.backups'
 import { Route as PanelCronRouteImport } from './routes/_panel.cron'
+import { Route as PanelDatabasesRouteImport } from './routes/_panel.databases'
 import { Route as PanelDnsRouteImport } from './routes/_panel.dns'
 import { Route as PanelFilesRouteImport } from './routes/_panel.files'
 import { Route as PanelFirewallRouteImport } from './routes/_panel.firewall'
@@ -70,6 +71,11 @@ const PanelBackupsRoute = PanelBackupsRouteImport.update({
 const PanelCronRoute = PanelCronRouteImport.update({
   id: '/cron',
   path: '/cron',
+  getParentRoute: () => PanelRoute,
+} as any)
+const PanelDatabasesRoute = PanelDatabasesRouteImport.update({
+  id: '/databases',
+  path: '/databases',
   getParentRoute: () => PanelRoute,
 } as any)
 const PanelDnsRoute = PanelDnsRouteImport.update({
@@ -156,6 +162,7 @@ export interface FileRoutesByFullPath {
   '/apps': typeof PanelAppsRoute
   '/backups': typeof PanelBackupsRoute
   '/cron': typeof PanelCronRoute
+  '/databases': typeof PanelDatabasesRoute
   '/dns': typeof PanelDnsRoute
   '/files': typeof PanelFilesRoute
   '/firewall': typeof PanelFirewallRoute
@@ -178,6 +185,7 @@ export interface FileRoutesByTo {
   '/apps': typeof PanelAppsRoute
   '/backups': typeof PanelBackupsRoute
   '/cron': typeof PanelCronRoute
+  '/databases': typeof PanelDatabasesRoute
   '/dns': typeof PanelDnsRoute
   '/files': typeof PanelFilesRoute
   '/firewall': typeof PanelFirewallRoute
@@ -203,6 +211,7 @@ export interface FileRoutesById {
   '/_panel/apps': typeof PanelAppsRoute
   '/_panel/backups': typeof PanelBackupsRoute
   '/_panel/cron': typeof PanelCronRoute
+  '/_panel/databases': typeof PanelDatabasesRoute
   '/_panel/dns': typeof PanelDnsRoute
   '/_panel/files': typeof PanelFilesRoute
   '/_panel/firewall': typeof PanelFirewallRoute
@@ -230,6 +239,7 @@ export interface FileRouteTypes {
     | '/apps'
     | '/backups'
     | '/cron'
+    | '/databases'
     | '/dns'
     | '/files'
     | '/firewall'
@@ -252,6 +262,7 @@ export interface FileRouteTypes {
     | '/apps'
     | '/backups'
     | '/cron'
+    | '/databases'
     | '/dns'
     | '/files'
     | '/firewall'
@@ -276,6 +287,7 @@ export interface FileRouteTypes {
     | '/_panel/apps'
     | '/_panel/backups'
     | '/_panel/cron'
+    | '/_panel/databases'
     | '/_panel/dns'
     | '/_panel/files'
     | '/_panel/firewall'
@@ -358,6 +370,13 @@ declare module '@tanstack/react-router' {
       path: '/cron'
       fullPath: '/cron'
       preLoaderRoute: typeof PanelCronRouteImport
+      parentRoute: typeof PanelRoute
+    }
+    '/_panel/databases': {
+      id: '/_panel/databases'
+      path: '/databases'
+      fullPath: '/databases'
+      preLoaderRoute: typeof PanelDatabasesRouteImport
       parentRoute: typeof PanelRoute
     }
     '/_panel/dns': {
@@ -486,6 +505,7 @@ interface PanelRouteChildren {
   PanelAppsRoute: typeof PanelAppsRoute
   PanelBackupsRoute: typeof PanelBackupsRoute
   PanelCronRoute: typeof PanelCronRoute
+  PanelDatabasesRoute: typeof PanelDatabasesRoute
   PanelDnsRoute: typeof PanelDnsRoute
   PanelFilesRoute: typeof PanelFilesRoute
   PanelFirewallRoute: typeof PanelFirewallRoute
@@ -503,6 +523,7 @@ const PanelRouteChildren: PanelRouteChildren = {
   PanelAppsRoute: PanelAppsRoute,
   PanelBackupsRoute: PanelBackupsRoute,
   PanelCronRoute: PanelCronRoute,
+  PanelDatabasesRoute: PanelDatabasesRoute,
   PanelDnsRoute: PanelDnsRoute,
   PanelFilesRoute: PanelFilesRoute,
   PanelFirewallRoute: PanelFirewallRoute,
