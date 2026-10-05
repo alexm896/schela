@@ -14,8 +14,8 @@ import {
   readFileAt,
   renameAt,
   writeFileAt,
-} from "./files";
-import { virtJoin, virtNormalize, virtParent, type FileTarget } from "./file-types";
+} from "./storage";
+import { virtJoin, virtNormalize, virtParent, type FileTarget } from "./files";
 import { mapApp } from "@/features/apps/map";
 import { mapSite } from "@/features/sites/map";
 import { siteFilesRoot } from "@/features/sites/site-root";

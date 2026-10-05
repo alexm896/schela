@@ -14,7 +14,7 @@ import {
   virtJoin,
   virtNormalize,
   virtParent,
-} from "./file-types.ts";
+} from "./files.ts";
 import {
   joinJail,
   localChmod,
@@ -26,7 +26,7 @@ import {
   localRead,
   localRename,
   localWrite,
-} from "./files.ts";
+} from "./storage.ts";
 
 async function withJail<T>(run: (jail: string) => Promise<T>): Promise<T> {
   const jail = await mkdtemp(join(tmpdir(), "schela-fm-"));
