@@ -3,7 +3,7 @@ import { ArrowUpRight, Globe, Lock, Shield } from "lucide-react";
 import { PageHeader } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
-import { getDashboard } from "@/lib/panel/server";
+import { getDashboard } from "@/features/dashboard/api";
 import { formatUptime } from "@/lib/utils";
 
 export const Route = createFileRoute("/_panel/")({

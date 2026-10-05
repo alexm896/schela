@@ -24,7 +24,8 @@ import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { UserButton } from "@/auth/gates";
 import { cn } from "@/lib/utils";
-import type { ModuleRow, PanelSettings } from "@/lib/panel/types";
+import type { ModuleRow } from "@/features/modules/types";
+import type { PanelSettings } from "@/features/settings/types";
 
 type NavItem = {
   to: string;

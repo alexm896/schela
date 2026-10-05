@@ -7,11 +7,9 @@ import type {
   DatabaseUser,
   DnsRecord,
   DnsZone,
-  FirewallRule,
   IpAddress,
   Mailbox,
   ManagedDatabase,
-  ModuleRow,
   NodeApp,
   Site,
   SiteWorker,
@@ -52,20 +50,6 @@ export function mapApp(row: Record<string, unknown>): NodeApp {
     ipId: row.ip_id == null || row.ip_id === "" ? null : num(row.ip_id),
     ipAddress: row.ip_address == null || row.ip_address === "" ? null : String(row.ip_address),
     createdAt: iso(row.created_at),
-  };
-}
-
-export function mapRule(row: Record<string, unknown>): FirewallRule {
-  return {
-    id: num(row.id),
-    direction: row.direction === "out" ? "out" : "in",
-    action: row.action === "deny" ? "deny" : "allow",
-    protocol:
-      row.protocol === "udp" ? "udp" : row.protocol === "any" ? "any" : "tcp",
-    port: String(row.port),
-    source: String(row.source),
-    comment: String(row.comment ?? ""),
-    enabled: bool(row.enabled),
   };
 }
 
@@ -214,18 +198,5 @@ export function mapRecord(row: Record<string, unknown>): DnsRecord {
     value: String(row.value),
     ttl: num(row.ttl),
     priority: row.priority == null ? null : num(row.priority),
-  };
-}
-
-export function mapModule(row: Record<string, unknown>): ModuleRow {
-  return {
-    id: num(row.id),
-    slug: String(row.slug),
-    name: String(row.name),
-    description: String(row.description),
-    version: String(row.version),
-    enabled: bool(row.enabled),
-    core: bool(row.core),
-    sortOrder: num(row.sort_order),
   };
 }

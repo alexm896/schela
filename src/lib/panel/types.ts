@@ -1,4 +1,3 @@
-import type { Activity } from "@/server/activity";
 import type { AccessLevel, DatabaseEngine } from "./databases";
 
 export const PHP_VERSIONS = ["8.1", "8.2", "8.3", "8.4"] as const;
@@ -8,17 +7,6 @@ export const DNS_TYPES = ["A", "AAAA", "CNAME", "MX", "TXT", "NS"] as const;
 export type PhpVersion = (typeof PHP_VERSIONS)[number];
 export type NodeVersion = (typeof NODE_VERSIONS)[number];
 export type DnsType = (typeof DNS_TYPES)[number];
-
-export type ModuleRow = {
-  id: number;
-  slug: string;
-  name: string;
-  description: string;
-  version: string;
-  enabled: boolean;
-  core: boolean;
-  sortOrder: number;
-};
 
 export type Site = {
   id: number;
@@ -56,17 +44,6 @@ export type NodeApp = {
   ipId: number | null;
   ipAddress: string | null;
   createdAt: string;
-};
-
-export type FirewallRule = {
-  id: number;
-  direction: "in" | "out";
-  action: "allow" | "deny";
-  protocol: "tcp" | "udp" | "any";
-  port: string;
-  source: string;
-  comment: string;
-  enabled: boolean;
 };
 
 export type Mailbox = {
@@ -157,42 +134,4 @@ export type DnsRecord = {
   value: string;
   ttl: number;
   priority: number | null;
-};
-
-export type PanelSettings = {
-  hostname: string;
-  isolation: boolean;
-  setupComplete: boolean;
-  sshPort: number;
-  autoUpdates: boolean;
-};
-
-export type LiveMetrics = {
-  cpu: number;
-  ram: number;
-  disk: number;
-  load: number;
-  uptimeSec: number;
-  spark: number[];
-};
-
-export type PanelState = {
-  settings: PanelSettings;
-  modules: ModuleRow[];
-};
-
-export type DashboardData = {
-  settings: PanelSettings;
-  modules: ModuleRow[];
-  metrics: LiveMetrics;
-  counts: {
-    sites: number;
-    apps: number;
-    mailboxes: number;
-    zones: number;
-    firewall: number;
-  };
-  sites: Site[];
-  apps: NodeApp[];
-  activity: Activity[];
 };
