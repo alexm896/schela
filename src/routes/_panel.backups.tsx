@@ -2,12 +2,14 @@ import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { Archive, Plus } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
+import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   createBackupJob,
   deleteBackupJob,
+  getBackupJobRemoval,
   listBackups,
   runBackupJob,
   toggleBackupJob,
@@ -18,6 +20,7 @@ import { BackupJobDialog } from "@/features/backups/components/backup-job-dialog
 import { BackupRunList } from "@/features/backups/components/backup-run-list";
 import { backupFormFromJob, emptyBackupForm, type BackupForm } from "@/features/backups/form";
 import type { BackupJob } from "@/features/backups/types";
+import { notifyRemoved } from "@/lib/notify";
 
 export const Route = createFileRoute("/_panel/backups")({
   loader: () => listBackups(),
@@ -32,6 +35,7 @@ function BackupsPage() {
   const [form, setForm] = useState<BackupForm>(emptyBackupForm);
   const [busy, setBusy] = useState(false);
   const [running, setRunning] = useState<number | null>(null);
+  const [removing, setRemoving] = useState<BackupJob | null>(null);
 
   const schedule = form.custom.trim() || form.schedule;
   const targets = form.scope === "site" ? sites : form.scope === "app" ? apps : [];
@@ -153,9 +157,7 @@ function BackupsPage() {
                 setForm(backupFormFromJob(job));
                 setOpen(true);
               }}
-              onRemove={() =>
-                void deleteBackupJob({ data: { id: job.id } }).then(() => router.invalidate())
-              }
+              onRemove={() => setRemoving(job)}
             />
           ))}
         </div>
@@ -173,6 +175,21 @@ function BackupsPage() {
         busy={busy}
         onSave={() => void onSave()}
       />
+
+      {removing ? (
+        <ConfirmDeleteDialog
+          title={`Remove backup job ${removing.name}?`}
+          description="It stops running on its schedule."
+          confirmLabel="Remove job"
+          loadPlan={() => getBackupJobRemoval({ data: { id: removing.id } })}
+          onConfirm={async ({ remove }) => {
+            const { warnings } = await deleteBackupJob({ data: { id: removing.id, remove } });
+            notifyRemoved(`Removed backup job ${removing.name}`, warnings);
+            await router.invalidate();
+          }}
+          onClose={() => setRemoving(null)}
+        />
+      ) : null}
     </div>
   );
 }

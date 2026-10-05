@@ -6,10 +6,11 @@ import { applyAfterChange } from "@/server/apply";
 import { getSql } from "@/server/db";
 import { dnsRecordIp } from "@/server/env";
 import { checkMailDnsLive } from "./dns-check";
-import { mailboxDomain } from "./mail";
+import { MAILBOX_REMOVAL_OPTIONS, mailboxDomain } from "./mail";
 import { describeMailDns, ensureMailDns, mailDnsBlueprint } from "./mail-dns";
 import { mapMailbox } from "./map";
 import { hashMailboxPassword } from "./password";
+import { mailboxById, mailboxRemovalPlan, removeMailbox } from "./removal";
 
 export const listMailboxes = createServerFn({ method: "GET" })
   .middleware([authMiddleware])
@@ -83,14 +84,26 @@ export const toggleMailbox = createServerFn({ method: "POST" })
     return rows[0] ? mapMailbox(rows[0]) : null;
   });
 
-export const deleteMailbox = createServerFn({ method: "POST" })
+export const getMailboxRemoval = createServerFn({ method: "GET" })
   .middleware([authMiddleware])
   .validator(z.object({ id: z.number() }))
   .handler(async ({ data }) => {
     const sql = await getSql();
-    await sql`delete from mailboxes where id = ${data.id}`;
-    await applyAfterChange(sql);
-    return { ok: true };
+    return mailboxRemovalPlan(sql, await mailboxById(sql, data.id));
+  });
+
+export const deleteMailbox = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .validator(
+    z.object({
+      id: z.number(),
+      remove: z.array(z.enum(MAILBOX_REMOVAL_OPTIONS)).max(MAILBOX_REMOVAL_OPTIONS.length),
+    }),
+  )
+  .handler(async ({ data }) => {
+    const sql = await getSql();
+    const warnings = await removeMailbox(sql, await mailboxById(sql, data.id), data.remove);
+    return { ok: true as const, warnings };
   });
 
 export const listMailDns = createServerFn({ method: "GET" })

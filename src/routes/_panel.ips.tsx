@@ -2,6 +2,7 @@ import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import { Network, Plus } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
 import { PageHeader } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -24,6 +25,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { assignIp, createIp, deleteIp, listIps } from "@/features/ips/api";
+import type { IpAddress } from "@/features/ips/types";
 
 export const Route = createFileRoute("/_panel/ips")({
   loader: () => listIps(),
@@ -43,6 +45,7 @@ function IpsPage() {
   const [address, setAddress] = useState("");
   const [label, setLabel] = useState("");
   const [busy, setBusy] = useState(false);
+  const [removing, setRemoving] = useState<IpAddress | null>(null);
 
   async function onCreate() {
     setBusy(true);
@@ -144,13 +147,7 @@ function IpsPage() {
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() =>
-                      void deleteIp({ data: { id: ip.id } })
-                        .then(() => router.invalidate())
-                        .catch((err: unknown) =>
-                          toast.error(err instanceof Error ? err.message : "Could not remove"),
-                        )
-                    }
+                    onClick={() => setRemoving(ip)}
                   >
                     Remove
                   </Button>
@@ -210,6 +207,24 @@ function IpsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {removing ? (
+        <ConfirmDeleteDialog
+          title={`Remove ${removing.address}?`}
+          description={
+            removing.assignedTo
+              ? `${removing.assignedTo} moves back to the main address, and its DNS A records with it.`
+              : "Nothing is bound to it."
+          }
+          confirmLabel="Remove IP"
+          onConfirm={async () => {
+            await deleteIp({ data: { id: removing.id } });
+            toast.success(`Removed ${removing.address}`);
+            await router.invalidate();
+          }}
+          onClose={() => setRemoving(null)}
+        />
+      ) : null}
     </div>
   );
 }

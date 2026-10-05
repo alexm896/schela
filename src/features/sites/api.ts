@@ -2,11 +2,13 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { authMiddleware } from "@/auth/middleware";
 import { ensureHostDns } from "@/features/dns/records";
+import { HOSTING_REMOVAL_OPTIONS } from "@/features/hosting/hosting";
 import { normalizeDomain } from "@/lib/utils";
 import { logActivity } from "@/server/activity";
 import { applyAfterChange } from "@/server/apply";
 import { getSql } from "@/server/db";
 import { mapSite } from "./map";
+import { removeSite, siteById, siteRemovalPlan } from "./removal";
 import { normalizeWebRoot, siteRootFor, webRootFromRoot } from "./site-root";
 import { systemUserFromDomain } from "./sites";
 import type { CertInfo } from "./types";
@@ -167,17 +169,25 @@ export const retrySiteTls = createServerFn({ method: "POST" })
     return { ...site, cert: await certFor(site.domain, site.ssl) };
   });
 
-export const deleteSite = createServerFn({ method: "POST" })
+export const getSiteRemoval = createServerFn({ method: "GET" })
   .middleware([authMiddleware])
   .validator(z.object({ id: z.number() }))
   .handler(async ({ data }) => {
     const sql = await getSql();
-    const rows = await sql<Record<string, unknown>>`
-      delete from sites where id = ${data.id} returning domain
-    `;
-    if (rows[0]) {
-      await logActivity(sql, "site", `Removed site ${String(rows[0].domain)}`);
-    }
-    await applyAfterChange(sql);
-    return { ok: true };
+    return siteRemovalPlan(sql, await siteById(sql, data.id));
+  });
+
+export const deleteSite = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .validator(
+    z.object({
+      id: z.number(),
+      confirm: z.string().max(255),
+      remove: z.array(z.enum(HOSTING_REMOVAL_OPTIONS)).max(HOSTING_REMOVAL_OPTIONS.length),
+    }),
+  )
+  .handler(async ({ data }) => {
+    const sql = await getSql();
+    const warnings = await removeSite(sql, await siteById(sql, data.id), data.remove, data.confirm);
+    return { ok: true as const, warnings };
   });

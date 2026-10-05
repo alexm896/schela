@@ -2,11 +2,13 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { authMiddleware } from "@/auth/middleware";
 import { ensureHostDns } from "@/features/dns/records";
+import { HOSTING_REMOVAL_OPTIONS } from "@/features/hosting/hosting";
 import { normalizeDomain } from "@/lib/utils";
 import { logActivity } from "@/server/activity";
 import { applyAfterChange } from "@/server/apply";
 import { getSql } from "@/server/db";
 import { mapApp } from "./map";
+import { appById, appRemovalPlan, removeApp } from "./removal";
 
 export const listApps = createServerFn({ method: "GET" })
   .middleware([authMiddleware])
@@ -89,17 +91,25 @@ export const updateApp = createServerFn({ method: "POST" })
     return mapApp(rows[0]);
   });
 
-export const deleteApp = createServerFn({ method: "POST" })
+export const getAppRemoval = createServerFn({ method: "GET" })
   .middleware([authMiddleware])
   .validator(z.object({ id: z.number() }))
   .handler(async ({ data }) => {
     const sql = await getSql();
-    const rows = await sql<Record<string, unknown>>`
-      delete from node_apps where id = ${data.id} returning name
-    `;
-    if (rows[0]) {
-      await logActivity(sql, "node", `Removed app ${String(rows[0].name)}`);
-    }
-    await applyAfterChange(sql);
-    return { ok: true };
+    return appRemovalPlan(sql, await appById(sql, data.id));
+  });
+
+export const deleteApp = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .validator(
+    z.object({
+      id: z.number(),
+      confirm: z.string().max(255),
+      remove: z.array(z.enum(HOSTING_REMOVAL_OPTIONS)).max(HOSTING_REMOVAL_OPTIONS.length),
+    }),
+  )
+  .handler(async ({ data }) => {
+    const sql = await getSql();
+    const warnings = await removeApp(sql, await appById(sql, data.id), data.remove, data.confirm);
+    return { ok: true as const, warnings };
   });

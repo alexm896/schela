@@ -1,6 +1,7 @@
 import { Cog, Plus, RotateCw, ScrollText } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
+import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -200,20 +201,6 @@ export function SiteWorkersCard({ siteId, systemUser, phpVersion, siteActive }: 
     }
   }
 
-  async function onRemove() {
-    if (!removing) return;
-    setBusy(true);
-    try {
-      await deleteSiteWorker({ data: { id: removing.id } });
-      toast.success(`Worker ${removing.name} removed`);
-      setRemoving(null);
-      await refresh();
-    } catch (err) {
-      toast.error(errorText(err, "Could not remove worker"));
-    } finally {
-      setBusy(false);
-    }
-  }
 
   return (
     <Card className="mt-3">
@@ -469,24 +456,19 @@ export function SiteWorkersCard({ siteId, systemUser, phpVersion, siteActive }: 
         </DialogContent>
       </Dialog>
 
-      <Dialog open={removing !== null} onOpenChange={(open) => !open && setRemoving(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Remove {removing?.name}?</DialogTitle>
-            <DialogDescription>
-              Its processes get a stop signal and finish their current job, then the worker is deleted.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setRemoving(null)}>
-              Cancel
-            </Button>
-            <Button variant="destructive" disabled={busy} onClick={() => void onRemove()}>
-              Remove worker
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {removing ? (
+        <ConfirmDeleteDialog
+          title={`Remove ${removing.name}?`}
+          description="Its processes get a stop signal and finish their current job, then the worker is deleted."
+          confirmLabel="Remove worker"
+          onConfirm={async () => {
+            await deleteSiteWorker({ data: { id: removing.id } });
+            toast.success(`Worker ${removing.name} removed`);
+            await refresh();
+          }}
+          onClose={() => setRemoving(null)}
+        />
+      ) : null}
     </Card>
   );
 }

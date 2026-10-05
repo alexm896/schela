@@ -13,6 +13,7 @@ import { applyAfterChange } from "@/server/apply";
 import { getSql, type Sql } from "@/server/db";
 import { isVpsApply } from "@/server/env";
 import {
+  BACKUP_JOB_REMOVAL_OPTIONS,
   assertRsyncDest,
   assertS3Bucket,
   assertS3Prefix,
@@ -20,6 +21,7 @@ import {
   parseBackupScope,
 } from "./backups";
 import { mapBackupJob } from "./map";
+import { backupJobById, backupJobRemovalPlan, removeBackupJob } from "./removal";
 import type { BackupJob, BackupRun } from "./types";
 
 function backupRoot(): string {
@@ -230,14 +232,26 @@ export const toggleBackupJob = createServerFn({ method: "POST" })
     return { ok: true as const };
   });
 
-export const deleteBackupJob = createServerFn({ method: "POST" })
+export const getBackupJobRemoval = createServerFn({ method: "GET" })
   .middleware([authMiddleware])
   .validator(z.object({ id: z.number() }))
   .handler(async ({ data }) => {
     const sql = await getSql();
-    await sql`delete from backup_jobs where id = ${data.id}`;
-    await applyAfterChange(sql);
-    return { ok: true as const };
+    return backupJobRemovalPlan(await backupJobById(sql, data.id));
+  });
+
+export const deleteBackupJob = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .validator(
+    z.object({
+      id: z.number(),
+      remove: z.array(z.enum(BACKUP_JOB_REMOVAL_OPTIONS)).max(BACKUP_JOB_REMOVAL_OPTIONS.length),
+    }),
+  )
+  .handler(async ({ data }) => {
+    const sql = await getSql();
+    const warnings = await removeBackupJob(sql, await backupJobById(sql, data.id), data.remove);
+    return { ok: true as const, warnings };
   });
 
 function stamp(): string {

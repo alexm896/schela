@@ -61,3 +61,7 @@ export function destinationSummary(job: {
   if (job.s3Enabled) tags.push("s3");
   return tags;
 }
+
+/** What may go with a deleted backup job besides its configuration. */
+export const BACKUP_JOB_REMOVAL_OPTIONS = ["archives"] as const;
+export type BackupJobRemovalOption = (typeof BACKUP_JOB_REMOVAL_OPTIONS)[number];

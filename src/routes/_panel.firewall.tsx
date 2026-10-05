@@ -2,6 +2,7 @@ import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { Plus, Shield } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
 import { PageHeader } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -30,6 +31,7 @@ import {
   listFirewall,
   toggleFirewallRule,
 } from "@/features/firewall/api";
+import type { FirewallRule } from "@/features/firewall/types";
 
 export const Route = createFileRoute("/_panel/firewall")({
   loader: () => listFirewall(),
@@ -46,6 +48,7 @@ function FirewallPage() {
   const [source, setSource] = useState("any");
   const [comment, setComment] = useState("");
   const [busy, setBusy] = useState(false);
+  const [removing, setRemoving] = useState<FirewallRule | null>(null);
   const openCount = rules.filter((r) => r.enabled && r.action === "allow").length;
 
   async function onCreate() {
@@ -143,11 +146,7 @@ function FirewallPage() {
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() =>
-                      void deleteFirewallRule({ data: { id: rule.id } }).then(() =>
-                        router.invalidate(),
-                      )
-                    }
+                    onClick={() => setRemoving(rule)}
                   >
                     Remove
                   </Button>
@@ -231,6 +230,24 @@ function FirewallPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {removing ? (
+        <ConfirmDeleteDialog
+          title="Remove this rule?"
+          description={
+            <span className="font-mono">
+              {removing.action} {removing.protocol}/{removing.port} from {removing.source}
+            </span>
+          }
+          confirmLabel="Remove rule"
+          onConfirm={async () => {
+            await deleteFirewallRule({ data: { id: removing.id } });
+            toast.success("Rule removed");
+            await router.invalidate();
+          }}
+          onClose={() => setRemoving(null)}
+        />
+      ) : null}
     </div>
   );
 }

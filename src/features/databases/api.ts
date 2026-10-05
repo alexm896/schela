@@ -5,7 +5,6 @@ import { logActivity } from "@/server/activity";
 import { applyAfterChange } from "@/server/apply";
 import { getSql, type Sql } from "@/server/db";
 import { isVpsApply } from "@/server/env";
-import { runSudoHelper } from "@/server/sudo-helper";
 import {
   DATABASE_ENGINES,
   DATABASE_ENGINE_KEYS,
@@ -15,11 +14,10 @@ import {
   type DatabaseEngine,
   type GrantInput,
 } from "./databases";
+import { dropDatabase, runDatabaseHelper } from "./manage";
 import { mapDatabase, mapDatabaseUser } from "./map";
 import { databasePasswordHash, generateDatabasePassword } from "./password";
 import type { DatabaseUser, ManagedDatabase } from "./types";
-
-const HELPER = "/usr/local/sbin/schela-db";
 
 export type DatabaseEngineStatus = {
   engine: DatabaseEngine;
@@ -46,14 +44,10 @@ export type IssuedCredentials = {
 
 type EngineInfo = { sizes?: unknown };
 
-async function runHelper(req: Record<string, unknown>): Promise<Record<string, unknown>> {
-  return runSudoHelper(HELPER, req, { label: "Database command", timeoutMs: 60_000 });
-}
-
 async function readServerInfo(): Promise<Partial<Record<DatabaseEngine, EngineInfo>>> {
   if (!isVpsApply()) return {};
   try {
-    const out = await runHelper({ op: "info" });
+    const out = await runDatabaseHelper({ op: "info" });
     return (out.engines ?? {}) as Partial<Record<DatabaseEngine, EngineInfo>>;
   } catch (err) {
     console.error("[schela] database info:", err);
@@ -312,10 +306,7 @@ export const deleteDatabase = createServerFn({ method: "POST" })
     const sql = await getSql();
     const db = await databaseById(sql, data.id);
     if (data.confirm !== db.name) throw new Error("Type the database name to confirm");
-    // Drop on the server first: if that fails the row stays and nothing is lost.
-    if (isVpsApply()) await runHelper({ op: "drop-database", engine: db.engine, name: db.name });
-    await sql`delete from databases where id = ${db.id}`;
-    await logActivity(sql, "database", `Deleted ${DATABASE_ENGINES[db.engine].label} database ${db.name}`);
+    await dropDatabase(sql, db);
     await applyAfterChange(sql);
     return { ok: true as const };
   });
@@ -386,7 +377,7 @@ export const deleteDatabaseUser = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const sql = await getSql();
     const user = await userById(sql, data.id);
-    if (isVpsApply()) await runHelper({ op: "drop-user", engine: user.engine, name: user.name });
+    if (isVpsApply()) await runDatabaseHelper({ op: "drop-user", engine: user.engine, name: user.name });
     await sql`delete from database_users where id = ${user.id}`;
     await logActivity(sql, "database", `Deleted ${DATABASE_ENGINES[user.engine].label} user ${user.name}`);
     await applyAfterChange(sql);

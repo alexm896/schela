@@ -17,3 +17,7 @@ export function generateMailboxPassword(): string {
   for (const b of bytes) out += chars[b % chars.length];
   return out;
 }
+
+/** What may go with a deleted mailbox besides its configuration. */
+export const MAILBOX_REMOVAL_OPTIONS = ["messages", "dns"] as const;
+export type MailboxRemovalOption = (typeof MAILBOX_REMOVAL_OPTIONS)[number];

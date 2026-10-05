@@ -72,9 +72,17 @@ export const deleteIp = createServerFn({ method: "POST" })
   .validator(z.object({ id: z.number() }))
   .handler(async ({ data }) => {
     const sql = await getSql();
+    // A site or app bound to it falls back to the main address (on delete set
+    // null); its DNS A records follow.
+    const bound = await sql<{ domain: string }>`
+      select domain from sites where ip_id = ${data.id}
+      union all
+      select domain from node_apps where ip_id = ${data.id}
+    `;
     const rows = await sql<{ address: string }>`
       delete from ip_addresses where id = ${data.id} returning address
     `;
+    for (const { domain } of bound) await ensureHostDns(sql, domain);
     if (rows[0]) await logActivity(sql, "ip", `Removed IP ${rows[0].address}`);
     await applyAfterChange(sql);
     return { ok: true as const };

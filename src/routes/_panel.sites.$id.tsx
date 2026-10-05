@@ -2,6 +2,7 @@ import { createFileRoute, Link, useNavigate, useRouter } from "@tanstack/react-r
 import { ArrowLeft, FolderLock, FolderOpen, User } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
 import { PageHeader } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -17,10 +18,11 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { SiteDatabasesCard } from "@/features/databases/components/site-databases";
-import { deleteSite, getSite, retrySiteTls, updateSite } from "@/features/sites/api";
+import { deleteSite, getSite, getSiteRemoval, retrySiteTls, updateSite } from "@/features/sites/api";
 import { normalizeWebRoot, webRootFromRoot } from "@/features/sites/site-root";
 import { PHP_VERSIONS } from "@/features/sites/sites";
 import { SiteWorkersCard } from "@/features/workers/components/site-workers";
+import { notifyRemoved } from "@/lib/notify";
 
 export const Route = createFileRoute("/_panel/sites/$id")({
   loader: async ({ params }) => {
@@ -72,15 +74,7 @@ function SiteDetail() {
     }
   }
 
-  async function onDelete() {
-    try {
-      await deleteSite({ data: { id: site.id } });
-      toast.success("Site removed");
-      await navigate({ to: "/sites" });
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not remove site");
-    }
-  }
+  const [removing, setRemoving] = useState(false);
 
   return (
     <div>
@@ -327,14 +321,10 @@ function SiteDetail() {
             <CardContent className="p-5">
               <p className="text-sm font-medium">Remove site</p>
               <p className="mt-1 text-xs text-muted-foreground">
-                Removes the vhost, PHP-FPM pool, and system user. Files stay until
-                you empty the home directory on the server.
+                Removes the vhost and the PHP-FPM pool. You choose whether its files, databases and
+                DNS records go too.
               </p>
-              <Button
-                variant="destructive"
-                className="mt-4"
-                onClick={() => void onDelete()}
-              >
+              <Button variant="destructive" className="mt-4" onClick={() => setRemoving(true)}>
                 Remove site
               </Button>
             </CardContent>
@@ -349,6 +339,21 @@ function SiteDetail() {
         siteActive={site.status === "active"}
       />
       <SiteDatabasesCard siteId={site.id} domain={site.domain} />
+
+      {removing ? (
+        <ConfirmDeleteDialog
+          title={`Remove ${site.domain}?`}
+          description="The site stops being served. This cannot be undone."
+          confirmLabel="Remove site"
+          loadPlan={() => getSiteRemoval({ data: { id: site.id } })}
+          onConfirm={async ({ remove, confirm }) => {
+            const { warnings } = await deleteSite({ data: { id: site.id, remove, confirm } });
+            notifyRemoved(`Removed ${site.domain}`, warnings);
+            await navigate({ to: "/sites" });
+          }}
+          onClose={() => setRemoving(false)}
+        />
+      ) : null}
     </div>
   );
 }

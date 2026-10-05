@@ -2,6 +2,7 @@ import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { Plus, Server } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
+import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
 import { PageHeader } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -27,9 +28,12 @@ import {
   createDnsRecord,
   createDnsZone,
   deleteDnsRecord,
+  deleteDnsZone,
+  getZoneRemoval,
   listDns,
 } from "@/features/dns/api";
 import { DNS_TYPES } from "@/features/dns/dns";
+import type { DnsRecord, DnsZone } from "@/features/dns/types";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/_panel/dns")({
@@ -50,6 +54,8 @@ function DnsPage() {
   const [ttl, setTtl] = useState("300");
   const [priority, setPriority] = useState("10");
   const [busy, setBusy] = useState(false);
+  const [removingRecord, setRemovingRecord] = useState<DnsRecord | null>(null);
+  const [removingZone, setRemovingZone] = useState<DnsZone | null>(null);
 
   const activeZone = zones.find((z) => z.id === zoneId) ?? zones[0];
   const visible = useMemo(
@@ -144,9 +150,12 @@ function DnsPage() {
             ))}
           </div>
           {activeZone ? (
-            <p className="mb-3 font-mono text-xs text-muted-foreground">
-              serial {activeZone.serial}
-            </p>
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <p className="font-mono text-xs text-muted-foreground">serial {activeZone.serial}</p>
+              <Button variant="ghost" size="sm" onClick={() => setRemovingZone(activeZone)}>
+                Remove zone
+              </Button>
+            </div>
           ) : null}
           <div className="overflow-x-auto rounded-xl bg-card shadow-[var(--shadow-border)]">
             <table className="w-full min-w-[560px] text-left text-sm">
@@ -175,11 +184,7 @@ function DnsPage() {
                       <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() =>
-                          void deleteDnsRecord({ data: { id: rec.id } }).then(() =>
-                            router.invalidate(),
-                          )
-                        }
+                        onClick={() => setRemovingRecord(rec)}
                       >
                         Remove
                       </Button>
@@ -277,6 +282,39 @@ function DnsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {removingRecord ? (
+        <ConfirmDeleteDialog
+          title="Remove this record?"
+          description={
+            <span className="font-mono">
+              {removingRecord.type} {removingRecord.name} {removingRecord.value}
+            </span>
+          }
+          confirmLabel="Remove record"
+          onConfirm={async () => {
+            await deleteDnsRecord({ data: { id: removingRecord.id } });
+            toast.success("Record removed");
+            await router.invalidate();
+          }}
+          onClose={() => setRemovingRecord(null)}
+        />
+      ) : null}
+
+      {removingZone ? (
+        <ConfirmDeleteDialog
+          title={`Remove the zone ${removingZone.name}?`}
+          description="This server stops answering for it. This cannot be undone."
+          confirmLabel="Remove zone"
+          loadPlan={() => getZoneRemoval({ data: { id: removingZone.id } })}
+          onConfirm={async ({ confirm }) => {
+            await deleteDnsZone({ data: { id: removingZone.id, confirm } });
+            toast.success(`Removed ${removingZone.name}`);
+            await router.invalidate();
+          }}
+          onClose={() => setRemovingZone(null)}
+        />
+      ) : null}
     </div>
   );
 }
