@@ -3,10 +3,12 @@ import { z } from "zod";
 import { authMiddleware } from "@/auth/middleware";
 import { getSql, type Sql } from "@/server/db";
 import { logActivity } from "@/server/activity";
-import { appSystemUser } from "@/lib/utils";
+import { appSystemUser } from "@/features/apps/apps";
 import { applyAfterChange } from "@/server/apply";
 import { ensureHostDns } from "./dns-auto";
-import { mapApp, mapCron, mapIp, mapSite } from "./map";
+import { mapApp } from "@/features/apps/map";
+import { mapSite } from "@/features/sites/map";
+import { mapCron, mapIp } from "./map";
 import { assertCronCommand, assertCronSchedule, normalizeIp } from "./net";
 import type { CronJob, IpAddress } from "./types";
 

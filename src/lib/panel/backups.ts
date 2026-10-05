@@ -19,7 +19,9 @@ import {
   type BackupRun,
   type BackupScope,
 } from "./backup";
-import { mapApp, mapBackupJob, mapSite } from "./map";
+import { mapApp } from "@/features/apps/map";
+import { mapSite } from "@/features/sites/map";
+import { mapBackupJob } from "./map";
 import { assertCronSchedule } from "./net";
 
 function backupRoot(): string {

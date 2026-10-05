@@ -2,7 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { authMiddleware } from "@/auth/middleware";
 import { getSql } from "@/server/db";
-import { appSystemUser } from "@/lib/utils";
+import { appSystemUser } from "@/features/apps/apps";
 import {
   chmodAt,
   copyAt,
@@ -16,8 +16,9 @@ import {
   writeFileAt,
 } from "./files";
 import { virtJoin, virtNormalize, virtParent, type FileTarget } from "./file-types";
-import { mapApp, mapSite } from "./map";
-import { siteFilesRoot } from "./site-root";
+import { mapApp } from "@/features/apps/map";
+import { mapSite } from "@/features/sites/map";
+import { siteFilesRoot } from "@/features/sites/site-root";
 
 const targetSchema = z.object({
   kind: z.enum(["site", "app"]),

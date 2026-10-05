@@ -10,48 +10,8 @@ import type {
   IpAddress,
   Mailbox,
   ManagedDatabase,
-  NodeApp,
-  Site,
   SiteWorker,
 } from "./types";
-
-export function mapSite(row: Record<string, unknown>): Site {
-  const status = row.status === "stopped" ? "stopped" : "active";
-  return {
-    id: num(row.id),
-    domain: String(row.domain),
-    phpVersion: String(row.php_version),
-    root: String(row.root),
-    ssl: bool(row.ssl),
-    forceHttps: bool(row.force_https),
-    isolated: bool(row.isolated),
-    systemUser: String(row.jail_user),
-    pool: String(row.pool),
-    status,
-    memoryLimit: String(row.memory_limit),
-    ipId: row.ip_id == null || row.ip_id === "" ? null : num(row.ip_id),
-    ipAddress: row.ip_address == null || row.ip_address === "" ? null : String(row.ip_address),
-    createdAt: iso(row.created_at),
-  };
-}
-
-export function mapApp(row: Record<string, unknown>): NodeApp {
-  const status = row.status === "stopped" ? "stopped" : "running";
-  return {
-    id: num(row.id),
-    name: String(row.name),
-    domain: String(row.domain),
-    nodeVersion: String(row.node_version),
-    port: num(row.port),
-    status,
-    entry: String(row.entry),
-    instances: num(row.instances),
-    memoryMb: num(row.memory_mb),
-    ipId: row.ip_id == null || row.ip_id === "" ? null : num(row.ip_id),
-    ipAddress: row.ip_address == null || row.ip_address === "" ? null : String(row.ip_address),
-    createdAt: iso(row.created_at),
-  };
-}
 
 export function mapMailbox(row: Record<string, unknown>): Mailbox {
   return {

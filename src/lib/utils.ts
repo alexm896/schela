@@ -19,36 +19,6 @@ export function formatUptime(seconds: number) {
   return `${m}m`;
 }
 
-export function systemUserFromDomain(domain: string) {
-  const slug = domain
-    .toLowerCase()
-    .replace(/^www\./, "")
-    .replace(/[^a-z0-9]+/g, "_")
-    .replace(/^_|_$/g, "")
-    .slice(0, 24);
-  return `s_${slug || "site"}`;
-}
-
-export function nodeUserFromDomain(domain: string) {
-  const slug = domain
-    .toLowerCase()
-    .replace(/^www\./, "")
-    .replace(/[^a-z0-9]+/g, "_")
-    .replace(/^_|_$/g, "")
-    .slice(0, 24);
-  return `n_${slug || "app"}`;
-}
-
-/** Matches schela-apply: `sa_` + slug of the app name, max 20. */
-export function appSystemUser(name: string) {
-  const slug = name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 20);
-  return `sa_${slug || "app"}`;
-}
-
 export function normalizeDomain(raw: string) {
   return raw
     .trim()

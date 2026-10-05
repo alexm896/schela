@@ -1,50 +1,8 @@
 import type { AccessLevel, DatabaseEngine } from "./databases";
 
-export const PHP_VERSIONS = ["8.1", "8.2", "8.3", "8.4"] as const;
-export const NODE_VERSIONS = ["18", "20", "22"] as const;
 export const DNS_TYPES = ["A", "AAAA", "CNAME", "MX", "TXT", "NS"] as const;
 
-export type PhpVersion = (typeof PHP_VERSIONS)[number];
-export type NodeVersion = (typeof NODE_VERSIONS)[number];
 export type DnsType = (typeof DNS_TYPES)[number];
-
-export type Site = {
-  id: number;
-  domain: string;
-  phpVersion: string;
-  root: string;
-  ssl: boolean;
-  forceHttps: boolean;
-  isolated: boolean;
-  systemUser: string;
-  pool: string;
-  status: "active" | "stopped";
-  memoryLimit: string;
-  ipId: number | null;
-  ipAddress: string | null;
-  createdAt: string;
-};
-
-export type CertInfo = {
-  status: "live" | "pending" | "error" | "off";
-  message: string;
-  expires: string | null;
-};
-
-export type NodeApp = {
-  id: number;
-  name: string;
-  domain: string;
-  nodeVersion: string;
-  port: number;
-  status: "running" | "stopped";
-  entry: string;
-  instances: number;
-  memoryMb: number;
-  ipId: number | null;
-  ipAddress: string | null;
-  createdAt: string;
-};
 
 export type Mailbox = {
   id: number;

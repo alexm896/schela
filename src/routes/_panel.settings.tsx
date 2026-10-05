@@ -9,7 +9,8 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { getAdminIdentity, updateAdminIdentity } from "@/auth/api";
 import { getPanelState, updateSettings } from "@/features/settings/api";
-import { NODE_VERSIONS, PHP_VERSIONS } from "@/lib/panel/types";
+import { NODE_VERSIONS } from "@/features/apps/apps";
+import { PHP_VERSIONS } from "@/features/sites/sites";
 
 export const Route = createFileRoute("/_panel/settings")({
   loader: async () => {
