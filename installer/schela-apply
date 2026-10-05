@@ -18,6 +18,24 @@ ok_node()   { [[ "$1" =~ ^(18|20|22)$ ]]; }
 ok_port()   { [[ "$1" =~ ^[0-9]{1,5}$ ]] && [ "$1" -ge 1 ] && [ "$1" -le 65535 ]; }
 ok_ipv4()   { [[ "$1" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; }
 
+# A TXT value as bind wants it: quoted strings of at most 255 bytes each.
+txt_strings() {
+  local v="$1" out=""
+  [ -n "$v" ] || { printf '""'; return; }
+  while [ -n "$v" ]; do
+    out+="\"${v:0:255}\" "
+    v="${v:255}"
+  done
+  printf '%s' "${out% }"
+}
+
+# The public key from an opendkim-genkey zone snippet:
+#   mail._domainkey IN TXT ( "v=DKIM1; h=sha256; k=rsa; " "p=MIIB..." "..." )
+# Only the quoted text counts; tabs and parentheses around it are dropped.
+dkim_key() {
+  grep -o '"[^"]*"' "$1" | tr -d '"\n\t ' | sed -n 's/.*p=\([^;]*\).*/\1/p' || true
+}
+
 bind_http() {
   ip="${1:-}"
   if ok_ipv4 "$ip"; then
@@ -503,7 +521,10 @@ apply_mail() {
   mod_on mail || return 0
   [ -d /etc/postfix ] || return 0
   [ "$DRY" -eq 1 ] && { log "would apply mail maps"; return; }
-  mkdir -p /var/lib/schela/mail /var/mail/schela
+  # Root writes the maps; postfix reads them. Reset owner and mode on every run
+  # so an install that handed the folder to the panel user heals itself.
+  install -d -m 0755 -o root -g root /var/lib/schela/mail
+  mkdir -p /var/mail/schela
   if ! id -u vmail >/dev/null 2>&1; then
     useradd --system --home /var/mail/schela --shell "$(nologin_shell)" vmail
   fi
@@ -556,6 +577,8 @@ apply_mail() {
   done < <(jq -c '.mailboxes // [] | .[]' "$STATE")
   chown -R vmail:vmail /var/mail/schela
   postmap /var/lib/schela/mail/vmailbox 2>/dev/null || true
+  chown root:root /var/lib/schela/mail/vmailbox /var/lib/schela/mail/vmailbox.db /var/lib/schela/mail/vdomains 2>/dev/null || true
+  chmod 644 /var/lib/schela/mail/vmailbox /var/lib/schela/mail/vmailbox.db /var/lib/schela/mail/vdomains 2>/dev/null || true
   postconf -e "virtual_mailbox_base = /var/mail/schela"
   postconf -e "virtual_mailbox_maps = hash:/var/lib/schela/mail/vmailbox"
   postconf -e "virtual_mailbox_domains = /var/lib/schela/mail/vdomains"
@@ -763,7 +786,12 @@ apply_dns() {
   mod_on dns || return 0
   [ -d /etc/bind ] || return 0
   [ "$DRY" -eq 1 ] && { log "would apply bind zones"; return; }
-  mkdir -p /var/lib/schela/bind
+  # Root writes the zones; named (user bind) reads them.
+  if getent group bind >/dev/null 2>&1; then
+    install -d -m 0750 -o root -g bind /var/lib/schela/bind
+  else
+    install -d -m 0755 -o root -g root /var/lib/schela/bind
+  fi
   : >/etc/bind/schela-zones.conf
   while IFS= read -r zone; do
     [ -n "$zone" ] || continue
@@ -772,6 +800,8 @@ apply_dns() {
     ok_domain "$zname" || continue
     [[ "$serial" =~ ^[0-9]+$ ]] || serial="$(date +%Y%m%d01)"
     zfile="/var/lib/schela/bind/${zname}.zone"
+    dkim_p=""
+    [ -f "/var/lib/schela/dkim/${zname}.txt" ] && dkim_p="$(dkim_key "/var/lib/schela/dkim/${zname}.txt")"
     {
       echo "\$TTL 300"
       echo "@ IN SOA ns1.${zname}. hostmaster.${zname}. (${serial} 3600 600 86400 300)"
@@ -785,22 +815,21 @@ apply_dns() {
         [[ "$t" =~ ^(A|AAAA|CNAME|MX|TXT|NS)$ ]] || continue
         [[ "$n" =~ ^[@A-Za-z0-9._*-]+$ ]] || continue
         [[ "$ttl" =~ ^[0-9]+$ ]] || ttl=300
+        # The panel stores a placeholder DKIM record; the real key replaces it.
+        [ -n "$dkim_p" ] && [ "$t" = "TXT" ] && [ "$n" = "mail._domainkey" ] && continue
         v="${v//$'\n'/}"
         v="${v//\"/}"
         if [ "$t" = "MX" ]; then
           [[ "$prio" =~ ^[0-9]+$ ]] || prio=10
           echo "${n} ${ttl} IN MX ${prio} ${v}."
         elif [ "$t" = "TXT" ]; then
-          echo "${n} ${ttl} IN TXT \"${v}\""
+          echo "${n} ${ttl} IN TXT $(txt_strings "$v")"
         else
           echo "${n} ${ttl} IN ${t} ${v}"
         fi
       done < <(jq -c '.records // [] | .[]' <<<"$zone")
-      if [ -f "/var/lib/schela/dkim/${zname}.txt" ]; then
-        p="$(tr -d '\n" ' <"/var/lib/schela/dkim/${zname}.txt" | sed -n 's/.*p=\([^;]*\).*/\1/p')"
-        if [ -n "$p" ]; then
-          echo "mail._domainkey 300 IN TXT \"v=DKIM1; k=rsa; p=${p}\""
-        fi
+      if [ -n "$dkim_p" ]; then
+        echo "mail._domainkey 300 IN TXT $(txt_strings "v=DKIM1; k=rsa; p=${dkim_p}")"
       fi
     } >"$zfile"
     chmod 644 "$zfile"
