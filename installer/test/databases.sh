@@ -258,8 +258,12 @@ echo "== sudo boundary and modules"
 out="$(printf '%s' '{"op":"info"}' | SUDO_USER=schela python3 "$DB" || true)"
 echo "$out" | grep -q 'Panel state is not readable' || fail "helper honoured SCHELA_STATE under sudo"
 out="$(SUDO_USER=schela python3 "$DB" sync 2>&1 || true)"
-echo "$out" | grep -q 'sync runs from schela-apply only' || fail "sync reachable through sudo"
-pass "under sudo: fixed state file, no sync"
+echo "$out" | grep -q 'Panel state is not readable' || fail "sync honoured SCHELA_STATE under sudo"
+mkdir -p /var/lib/schela
+cp "$SCHELA_STATE" /var/lib/schela/state.json
+SUDO_USER=schela python3 "$DB" sync 2>/tmp/schela-db.log || { cat /tmp/schela-db.log; fail "sync failed when schela-apply runs through sudo"; }
+rm -f /var/lib/schela/state.json
+pass "under sudo: fixed state file; sync still works for schela-apply"
 
 write_state '{"databases":[{"name":"offdb"}],"users":[]}' '{"databases":[{"name":"offdb"}],"users":[]}' '{"mariadb":false,"postgresql":false}'
 sync_db

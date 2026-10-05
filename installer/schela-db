@@ -4,13 +4,13 @@
 Two entry points:
 
   schela-db sync [mariadb|postgresql] [--force]
-      Run by schela-apply as root. Creates the databases and users listed in
+      Run by schela-apply as root (through the panel's sudo, or by hand). Creates the databases and users listed in
       state.json and sets each user's access. Never drops anything. Users whose
       wanted state is unchanged since the last sync are left alone, so an apply
       for an unrelated change does not touch live database sessions.
 
   schela-db   (JSON on stdin, JSON on stdout)
-      Run by the panel through sudo, with no arguments allowed:
+      Run by the panel through sudo; sudoers allows no arguments:
         {"op": "info"}
         {"op": "drop-database", "engine": "mariadb", "name": "shop"}
         {"op": "drop-user", "engine": "postgresql", "name": "shop"}
@@ -524,9 +524,14 @@ def main() -> None:
     if os.geteuid() != 0:
         fail("root required")
     if args and args[0] == "sync":
-        if UNDER_SUDO:
-            fail("sync runs from schela-apply only")
-        raise SystemExit(cmd_sync(args[1:]))
+        # schela-apply runs this through the panel's sudo, so SUDO_USER is set
+        # here too; that only pins the state file. The panel itself cannot
+        # pass arguments: sudoers allows `schela-db ""`.
+        try:
+            raise SystemExit(cmd_sync(args[1:]))
+        except DbError as exc:
+            log(str(exc))
+            raise SystemExit(1) from exc
     if args:
         fail("Unknown command")
     try:
