@@ -33,6 +33,7 @@ Open that URL. Set the hostname, pick modules, leave isolation on. Then create a
 |---|---|
 | **Sites** | Unix user + home jail + dedicated PHP-FPM pool + nginx vhost + optional Let's Encrypt |
 | **Node apps** | Unprivileged systemd unit + reverse proxy |
+| **Databases** | MariaDB and PostgreSQL on 127.0.0.1; users with full, read-write or read-only access per database |
 | **Firewall** | UFW default-deny. Port 22 is always left open |
 | **Mail** | Postfix virtual mailboxes |
 | **DNS** | Bind master zones |

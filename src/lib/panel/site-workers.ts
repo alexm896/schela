@@ -4,6 +4,7 @@ import { authMiddleware } from "@/lib/auth/middleware";
 import { getSql, type Sql } from "@/lib/db";
 import { applyAfterChange, isVpsApply } from "./apply";
 import { mapWorker } from "./map";
+import { runSudoHelper } from "./sudo-helper";
 import type { SiteWorker } from "./types";
 import {
   parseSystemctlShow,
@@ -74,44 +75,7 @@ async function readInstances(workers: SiteWorker[]): Promise<Map<number, WorkerI
 
 async function runHelper(req: Record<string, unknown>): Promise<Record<string, unknown>> {
   if (!isVpsApply()) throw new Error("Workers are managed on the server only");
-  const { spawn } = await import("node:child_process");
-  return new Promise((resolve, reject) => {
-    const child = spawn("sudo", ["-n", HELPER], { stdio: ["pipe", "pipe", "pipe"] });
-    let out = "";
-    let err = "";
-    const timer = setTimeout(() => {
-      child.kill("SIGKILL");
-      reject(new Error("Worker command timed out"));
-    }, 20_000);
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (chunk: string) => {
-      out += chunk;
-    });
-    child.stderr.on("data", (chunk: string) => {
-      err += chunk;
-    });
-    child.on("error", (e) => {
-      clearTimeout(timer);
-      reject(e);
-    });
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      let parsed: Record<string, unknown>;
-      try {
-        parsed = JSON.parse(out) as Record<string, unknown>;
-      } catch {
-        reject(new Error(err.trim() || `schela-workers exited ${code}`));
-        return;
-      }
-      if (parsed.ok !== true) {
-        reject(new Error(String(parsed.error || "Worker command failed")));
-        return;
-      }
-      resolve(parsed);
-    });
-    child.stdin.end(JSON.stringify(req));
-  });
+  return runSudoHelper(HELPER, req, { label: "Worker command" });
 }
 
 const workerFields = {

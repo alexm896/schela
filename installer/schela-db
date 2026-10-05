@@ -1,0 +1,558 @@
+#!/usr/bin/env python3
+"""Managed MariaDB and PostgreSQL databases for the Schela panel.
+
+Two entry points:
+
+  schela-db sync [mariadb|postgresql] [--force]
+      Run by schela-apply as root. Creates the databases and users listed in
+      state.json and sets each user's access. Never drops anything. Users whose
+      wanted state is unchanged since the last sync are left alone, so an apply
+      for an unrelated change does not touch live database sessions.
+
+  schela-db   (JSON on stdin, JSON on stdout)
+      Run by the panel through sudo, with no arguments allowed:
+        {"op": "info"}
+        {"op": "drop-database", "engine": "mariadb", "name": "shop"}
+        {"op": "drop-user", "engine": "postgresql", "name": "shop"}
+      Only names present in the panel state can be dropped; system databases
+      and accounts are refused even if they appear there.
+
+Every name is checked against a small identifier alphabet and every password
+hash against the exact format its engine stores before it reaches SQL.
+"""
+from __future__ import annotations
+
+import glob
+import hashlib
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+from typing import Any
+
+UNDER_SUDO = "SUDO_USER" in os.environ
+# Under sudo the caller never chooses the state file (sudo also resets env).
+STATE = "/var/lib/schela/state.json" if UNDER_SUDO else os.environ.get(
+    "SCHELA_STATE", "/var/lib/schela/state.json"
+)
+SYNC_DIR = "/var/lib/schela/db" if UNDER_SUDO else os.environ.get(
+    "SCHELA_DB_SYNC_DIR", "/var/lib/schela/db"
+)
+ENGINES = ("mariadb", "postgresql")
+LEVELS = ("full", "readwrite", "readonly")
+TIMEOUT = 120
+
+NAME_RE = re.compile(r"[a-z][a-z0-9_]{0,31}")
+RESERVED = {
+    "mariadb": {"mysql", "information_schema", "performance_schema", "sys", "test", "root", "mariadb", "public"},
+    "postgresql": {"postgres", "template0", "template1", "public", "root"},
+}
+RESERVED_PREFIXES = ("pg_", "schela_")
+HASH_RE = {
+    "mariadb": re.compile(r"\*[0-9A-F]{40}"),
+    "postgresql": re.compile(
+        r"SCRAM-SHA-256\$4096:[A-Za-z0-9+/]+={0,2}\$[A-Za-z0-9+/]+={0,2}:[A-Za-z0-9+/]+={0,2}"
+    ),
+}
+# MariaDB accounts each user gets: socket, IPv4 and IPv6 loopback.
+MARIADB_LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1")
+MARIADB_PRIVILEGES = {
+    "full": "ALL PRIVILEGES",
+    "readwrite": "SELECT, INSERT, UPDATE, DELETE, EXECUTE, CREATE TEMPORARY TABLES, LOCK TABLES, SHOW VIEW",
+    "readonly": "SELECT, SHOW VIEW",
+}
+
+
+class DbError(Exception):
+    pass
+
+
+def log(msg: str) -> None:
+    sys.stderr.write(f"schela-db: {msg}\n")
+
+
+def fail(msg: str, code: int = 1) -> None:
+    sys.stdout.write(json.dumps({"ok": False, "error": msg}) + "\n")
+    raise SystemExit(code)
+
+
+def valid_name(engine: str, name: Any) -> bool:
+    return (
+        isinstance(name, str)
+        and NAME_RE.fullmatch(name) is not None
+        and name not in RESERVED[engine]
+        and not name.startswith(RESERVED_PREFIXES)
+    )
+
+
+def owner_role(database: str) -> str:
+    """PostgreSQL role that owns a managed database and everything in it."""
+    return f"schela_owner_{database}"
+
+
+# --- state -------------------------------------------------------------------
+
+
+def load_state() -> dict[str, Any]:
+    try:
+        with open(STATE, encoding="utf-8") as fh:
+            state = json.load(fh)
+    except (OSError, ValueError) as exc:
+        raise DbError("Panel state is not readable") from exc
+    if not isinstance(state, dict):
+        raise DbError("Panel state is not readable")
+    return state
+
+
+def wanted(state: dict[str, Any], engine: str) -> tuple[list[str], list[dict[str, Any]]]:
+    """Valid databases and users for one engine; anything malformed is skipped."""
+    section = ((state.get("databases") or {}).get(engine)) or {}
+    databases: list[str] = []
+    for db in section.get("databases") or []:
+        name = db.get("name") if isinstance(db, dict) else None
+        if valid_name(engine, name):
+            if name not in databases:
+                databases.append(name)
+        else:
+            log(f"{engine}: skip database with invalid name {name!r}")
+    users: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for user in section.get("users") or []:
+        if not isinstance(user, dict):
+            continue
+        name = user.get("name")
+        if not valid_name(engine, name) or name in seen:
+            log(f"{engine}: skip user with invalid name {name!r}")
+            continue
+        pw_hash = user.get("passwordHash")
+        if not isinstance(pw_hash, str) or not HASH_RE[engine].fullmatch(pw_hash):
+            log(f"{engine}: skip user {name}, bad password hash")
+            continue
+        grants: dict[str, str] = {}
+        for grant in user.get("grants") or []:
+            if not isinstance(grant, dict):
+                continue
+            db, level = grant.get("database"), grant.get("level")
+            if db in databases and level in LEVELS:
+                grants[db] = level
+            else:
+                log(f"{engine}: user {name}: skip grant {db!r} {level!r}")
+        seen.add(name)
+        users.append({"name": name, "passwordHash": pw_hash, "grants": dict(sorted(grants.items()))})
+    return databases, users
+
+
+def fingerprint(value: Any) -> str:
+    return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
+
+
+def load_synced(engine: str) -> dict[str, Any]:
+    try:
+        with open(os.path.join(SYNC_DIR, f"{engine}.json"), encoding="utf-8") as fh:
+            data = json.load(fh)
+        if isinstance(data, dict):
+            return {
+                "databases": dict(data.get("databases") or {}),
+                "users": dict(data.get("users") or {}),
+            }
+    except (OSError, ValueError):
+        pass
+    return {"databases": {}, "users": {}}
+
+
+def save_synced(engine: str, synced: dict[str, Any]) -> None:
+    os.makedirs(SYNC_DIR, mode=0o700, exist_ok=True)
+    path = os.path.join(SYNC_DIR, f"{engine}.json")
+    tmp = f"{path}.tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        json.dump(synced, fh, sort_keys=True)
+    os.replace(tmp, path)
+
+
+# --- engines -------------------------------------------------------------------
+
+
+def run(argv: list[str], sql: str) -> str:
+    try:
+        res = subprocess.run(
+            argv, input=sql, capture_output=True, text=True, timeout=TIMEOUT, check=False, cwd="/"
+        )
+    except FileNotFoundError as exc:
+        raise DbError(f"{argv[0]} is not installed") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise DbError(f"{argv[0]} timed out") from exc
+    if res.returncode != 0:
+        raise DbError((res.stderr or res.stdout).strip()[:600] or f"{argv[0]} exited {res.returncode}")
+    return res.stdout
+
+
+class MariaDB:
+    engine = "mariadb"
+
+    def client(self) -> str:
+        found = shutil.which("mariadb") or shutil.which("mysql")
+        if not found:
+            raise DbError("MariaDB client is not installed")
+        return found
+
+    def installed(self) -> bool:
+        return any(shutil.which(b) or os.path.exists(f"/usr/sbin/{b}") for b in ("mariadbd", "mysqld"))
+
+    def query(self, sql: str) -> list[list[str]]:
+        # Root over the local socket: Debian and Ubuntu authenticate it with unix_socket.
+        out = run([self.client(), "--batch", "--skip-column-names", "--protocol=socket"], sql)
+        return [line.split("\t") for line in out.splitlines() if line]
+
+    @staticmethod
+    def account(user: str, host: str) -> str:
+        return f"'{user}'@'{host}'"
+
+    def version(self) -> str:
+        return self.query("SELECT VERSION();")[0][0]
+
+    def sizes(self) -> dict[str, int]:
+        sizes = {row[0]: 0 for row in self.query("SHOW DATABASES;")}
+        for schema, size in self.query(
+            "SELECT table_schema, COALESCE(SUM(data_length + index_length), 0) "
+            "FROM information_schema.tables GROUP BY table_schema;"
+        ):
+            sizes[schema] = int(float(size))
+        return sizes
+
+    def sync(self, databases: list[str], users: list[dict[str, Any]], synced: dict[str, Any], force: bool) -> None:
+        existing = {row[0] for row in self.query("SHOW DATABASES;")}
+        for db in databases:
+            if db not in existing:
+                log(f"mariadb: create database {db}")
+                self.query(
+                    f"CREATE DATABASE IF NOT EXISTS `{db}` "
+                    "CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+                )
+            synced["databases"][db] = True
+
+        accounts: dict[str, set[str]] = {}
+        for user, host in self.query("SELECT User, Host FROM mysql.user;"):
+            accounts.setdefault(user, set()).add(host)
+
+        for user in users:
+            name = user["name"]
+            hosts = MARIADB_LOCAL_HOSTS
+            want = fingerprint({"user": user, "hosts": hosts})
+            have = accounts.get(name, set())
+            if not force and synced["users"].get(name) == want and set(hosts) <= have:
+                continue
+            log(f"mariadb: sync user {name}")
+            stmts: list[str] = []
+            for host in sorted(have - set(hosts)):
+                stmts.append(f"DROP USER IF EXISTS {self.account(name, host)};")
+            for host in hosts:
+                acct = self.account(name, host)
+                stmts.append(f"CREATE USER IF NOT EXISTS {acct} IDENTIFIED BY PASSWORD '{user['passwordHash']}';")
+                stmts.append(f"ALTER USER {acct} IDENTIFIED BY PASSWORD '{user['passwordHash']}';")
+                stmts.append(f"REVOKE ALL PRIVILEGES, GRANT OPTION FROM {acct};")
+                for db, level in user["grants"].items():
+                    stmts.append(f"GRANT {MARIADB_PRIVILEGES[level]} ON `{db}`.* TO {acct};")
+            self.query("\n".join(stmts))
+            synced["users"][name] = want
+
+        wanted_users = {u["name"] for u in users}
+        synced["users"] = {k: v for k, v in synced["users"].items() if k in wanted_users}
+        synced["databases"] = {k: v for k, v in synced["databases"].items() if k in databases}
+
+    def drop_database(self, name: str) -> None:
+        self.query(f"DROP DATABASE IF EXISTS `{name}`;")
+
+    def drop_user(self, name: str) -> None:
+        hosts = [row[0] for row in self.query(f"SELECT Host FROM mysql.user WHERE User = '{name}';")]
+        if hosts:
+            self.query("\n".join(f"DROP USER IF EXISTS {self.account(name, h)};" for h in hosts))
+
+
+class PostgreSQL:
+    engine = "postgresql"
+
+    def installed(self) -> bool:
+        return bool(glob.glob("/usr/lib/postgresql/*/bin/postgres"))
+
+    def query(self, sql: str, database: str = "postgres") -> list[list[str]]:
+        # Superuser over the local socket, as the postgres OS user (peer auth).
+        out = run(
+            [
+                "runuser", "-u", "postgres", "--",
+                "psql", "-X", "-q", "-A", "-t", "-F", "\t",
+                "-v", "ON_ERROR_STOP=1", "-d", database, "-f", "-",
+            ],
+            sql,
+        )
+        return [line.split("\t") for line in out.splitlines() if line]
+
+    def version(self) -> str:
+        return self.query("SHOW server_version;")[0][0]
+
+    def sizes(self) -> dict[str, int]:
+        return {
+            name: int(size)
+            for name, size in self.query(
+                "SELECT datname, pg_database_size(datname) FROM pg_database WHERE NOT datistemplate;"
+            )
+        }
+
+    def roles(self) -> set[str]:
+        return {row[0] for row in self.query("SELECT rolname FROM pg_roles;")}
+
+    def databases(self) -> set[str]:
+        return {row[0] for row in self.query("SELECT datname FROM pg_database;")}
+
+    def setup_database(self, db: str, roles: set[str], existing: set[str]) -> None:
+        owner = owner_role(db)
+        if owner not in roles:
+            self.query(f'CREATE ROLE "{owner}" NOLOGIN;')
+            roles.add(owner)
+        if db not in existing:
+            log(f"postgresql: create database {db}")
+            self.query(f"CREATE DATABASE \"{db}\" OWNER \"{owner}\" TEMPLATE template0 ENCODING 'UTF8';")
+            existing.add(db)
+        # Only users given access may connect; only the owner role may create
+        # objects in public (PostgreSQL 14 still lets PUBLIC create there).
+        self.query(f'REVOKE ALL ON DATABASE "{db}" FROM PUBLIC;')
+        self.query(
+            f'ALTER SCHEMA public OWNER TO "{owner}";\n'
+            "REVOKE ALL ON SCHEMA public FROM PUBLIC;",
+            database=db,
+        )
+
+    def sync(self, databases: list[str], users: list[dict[str, Any]], synced: dict[str, Any], force: bool) -> None:
+        roles = self.roles()
+        existing = self.databases()
+        for db in databases:
+            if force or not synced["databases"].get(db) or db not in existing or owner_role(db) not in roles:
+                self.setup_database(db, roles, existing)
+            synced["databases"][db] = True
+
+        changed = []
+        for user in users:
+            want = fingerprint({"user": user})
+            if force or synced["users"].get(user["name"]) != want or user["name"] not in roles:
+                changed.append((user, want))
+        if not changed:
+            self.forget(databases, users, synced)
+            return
+
+        # Cluster level: login role, password, and per-database CONNECT and owner membership.
+        stmts: list[str] = []
+        for user, _ in changed:
+            name = user["name"]
+            log(f"postgresql: sync user {name}")
+            if name not in roles:
+                stmts.append(f'CREATE ROLE "{name}" LOGIN;')
+            stmts.append(
+                f'ALTER ROLE "{name}" WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE '
+                f"NOREPLICATION NOBYPASSRLS PASSWORD '{user['passwordHash']}';"
+            )
+            for db in databases:
+                stmts.append(f'REVOKE ALL ON DATABASE "{db}" FROM "{name}";')
+                stmts.append(f'ALTER ROLE "{name}" IN DATABASE "{db}" RESET role;')
+                stmts.append(f'REVOKE "{owner_role(db)}" FROM "{name}";')
+            for db, level in user["grants"].items():
+                if level == "full":
+                    # Sessions switch to the owner role, so tables made by any
+                    # full user belong to the database, not to that user.
+                    stmts.append(f'GRANT CONNECT, TEMPORARY ON DATABASE "{db}" TO "{name}";')
+                    stmts.append(f'GRANT "{owner_role(db)}" TO "{name}";')
+                    stmts.append(f"ALTER ROLE \"{name}\" IN DATABASE \"{db}\" SET role = '{owner_role(db)}';")
+                else:
+                    stmts.append(f'GRANT CONNECT ON DATABASE "{db}" TO "{name}";')
+        self.query("\n".join(stmts))
+
+        # Database level: object privileges for read-write and read-only users.
+        for db in databases:
+            owner = owner_role(db)
+            stmts = []
+            for user, _ in changed:
+                name = user["name"]
+                for kind in ("TABLES", "SEQUENCES", "FUNCTIONS"):
+                    stmts.append(f'REVOKE ALL ON ALL {kind} IN SCHEMA public FROM "{name}";')
+                    stmts.append(
+                        f'ALTER DEFAULT PRIVILEGES FOR ROLE "{owner}" IN SCHEMA public '
+                        f'REVOKE ALL ON {kind} FROM "{name}";'
+                    )
+                stmts.append(f'REVOKE ALL ON SCHEMA public FROM "{name}";')
+                level = user["grants"].get(db)
+                if level == "readwrite":
+                    tables, seqs = "SELECT, INSERT, UPDATE, DELETE", "USAGE, SELECT, UPDATE"
+                elif level == "readonly":
+                    tables, seqs = "SELECT", "SELECT"
+                else:
+                    continue
+                stmts.append(f'GRANT USAGE ON SCHEMA public TO "{name}";')
+                stmts.append(f'GRANT {tables} ON ALL TABLES IN SCHEMA public TO "{name}";')
+                stmts.append(f'GRANT {seqs} ON ALL SEQUENCES IN SCHEMA public TO "{name}";')
+                stmts.append(
+                    f'ALTER DEFAULT PRIVILEGES FOR ROLE "{owner}" IN SCHEMA public '
+                    f'GRANT {tables} ON TABLES TO "{name}";'
+                )
+                stmts.append(
+                    f'ALTER DEFAULT PRIVILEGES FOR ROLE "{owner}" IN SCHEMA public '
+                    f'GRANT {seqs} ON SEQUENCES TO "{name}";'
+                )
+            self.query("\n".join(stmts), database=db)
+
+        for user, want in changed:
+            synced["users"][user["name"]] = want
+        self.forget(databases, users, synced)
+
+    @staticmethod
+    def forget(databases: list[str], users: list[dict[str, Any]], synced: dict[str, Any]) -> None:
+        wanted_users = {u["name"] for u in users}
+        synced["users"] = {k: v for k, v in synced["users"].items() if k in wanted_users}
+        synced["databases"] = {k: v for k, v in synced["databases"].items() if k in databases}
+
+    def drop_database(self, name: str) -> None:
+        self.query(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE);')
+        self.query(f'DROP ROLE IF EXISTS "{owner_role(name)}";')
+
+    def drop_user(self, name: str, databases: list[str]) -> None:
+        if name not in self.roles():
+            return
+        existing = self.databases()
+        for db in databases:
+            if db in existing:
+                # Hand anything the user owns to the database, then drop its privileges.
+                self.query(f'REASSIGN OWNED BY "{name}" TO "{owner_role(db)}";\nDROP OWNED BY "{name}";', database=db)
+        self.query(f'DROP ROLE IF EXISTS "{name}";')
+
+
+def engine_for(name: Any) -> MariaDB | PostgreSQL:
+    if name == "mariadb":
+        return MariaDB()
+    if name == "postgresql":
+        return PostgreSQL()
+    raise DbError("Unknown database engine")
+
+
+def module_on(state: dict[str, Any], engine: str) -> bool:
+    return (state.get("modules") or {}).get(engine) is True
+
+
+# --- entry points ----------------------------------------------------------------
+
+
+def cmd_sync(args: list[str]) -> int:
+    force = "--force" in args
+    targets = [a for a in args if a != "--force"] or list(ENGINES)
+    for target in targets:
+        if target not in ENGINES:
+            log(f"unknown engine {target}")
+            return 2
+    state = load_state()
+    status = 0
+    for name in targets:
+        if not module_on(state, name):
+            continue
+        engine = engine_for(name)
+        databases, users = wanted(state, name)
+        synced = load_synced(name)
+        try:
+            engine.sync(databases, users, synced, force)
+        except DbError as exc:
+            log(f"{name}: {exc}")
+            status = 1
+        finally:
+            save_synced(name, synced)
+    return status
+
+
+def op_info(state: dict[str, Any]) -> dict[str, Any]:
+    engines: dict[str, Any] = {}
+    for name in ENGINES:
+        engine = engine_for(name)
+        managed, _ = wanted(state, name)
+        info: dict[str, Any] = {"installed": engine.installed(), "running": False, "version": None, "sizes": {}}
+        if info["installed"]:
+            try:
+                info["version"] = engine.version()
+                info["running"] = True
+                sizes = engine.sizes()
+                info["sizes"] = {db: sizes[db] for db in managed if db in sizes}
+            except DbError:
+                pass
+        engines[name] = info
+    return {"ok": True, "engines": engines}
+
+
+def managed_target(state: dict[str, Any], req: dict[str, Any], kind: str) -> tuple[str, str]:
+    engine, name = req.get("engine"), req.get("name")
+    if engine not in ENGINES:
+        raise DbError("Unknown database engine")
+    if not valid_name(engine, name):
+        raise DbError(f"Refusing to drop {kind} {name!r}")
+    databases, users = wanted(state, engine)
+    names = databases if kind == "database" else [u["name"] for u in users]
+    if name not in names:
+        raise DbError(f"{name} is not a {kind} managed by the panel")
+    return engine, name
+
+
+def op_drop(state: dict[str, Any], req: dict[str, Any], kind: str) -> dict[str, Any]:
+    engine_name, name = managed_target(state, req, kind)
+    engine = engine_for(engine_name)
+    synced = load_synced(engine_name)
+    if kind == "database":
+        engine.drop_database(name)
+        synced["databases"].pop(name, None)
+    else:
+        if isinstance(engine, PostgreSQL):
+            engine.drop_user(name, wanted(state, engine_name)[0])
+        else:
+            engine.drop_user(name)
+        synced["users"].pop(name, None)
+    save_synced(engine_name, synced)
+    return {"ok": True}
+
+
+def main() -> None:
+    args = sys.argv[1:]
+    if args and args[0] in ("-h", "--help"):
+        sys.stdout.write(
+            "schela-db sync [mariadb|postgresql] [--force]\n"
+            "schela-db  (JSON on stdin) ops: info drop-database drop-user\n"
+        )
+        return
+    if os.geteuid() != 0:
+        fail("root required")
+    if args and args[0] == "sync":
+        if UNDER_SUDO:
+            fail("sync runs from schela-apply only")
+        raise SystemExit(cmd_sync(args[1:]))
+    if args:
+        fail("Unknown command")
+    try:
+        raw = sys.stdin.read(65536)
+        req = json.loads(raw) if raw.strip() else {}
+    except ValueError:
+        fail("Invalid JSON")
+    if not isinstance(req, dict):
+        fail("Invalid request")
+    try:
+        state = load_state()
+        op = req.get("op")
+        if op == "info":
+            out = op_info(state)
+        elif op == "drop-database":
+            out = op_drop(state, req, "database")
+        elif op == "drop-user":
+            out = op_drop(state, req, "user")
+        else:
+            raise DbError("Unknown op")
+        sys.stdout.write(json.dumps(out) + "\n")
+    except DbError as exc:
+        fail(str(exc))
+    except OSError as exc:
+        fail(str(exc) or exc.__class__.__name__)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,3 +1,5 @@
+import type { AccessLevel, DatabaseEngine } from "./databases";
+
 export const PHP_VERSIONS = ["8.1", "8.2", "8.3", "8.4"] as const;
 export const NODE_VERSIONS = ["18", "20", "22"] as const;
 export const DNS_TYPES = ["A", "AAAA", "CNAME", "MX", "TXT", "NS"] as const;
@@ -98,6 +100,31 @@ export type SiteWorker = {
   stopTimeout: number;
   memoryMb: number;
   enabled: boolean;
+  createdAt: string;
+};
+
+export type ManagedDatabase = {
+  id: number;
+  engine: DatabaseEngine;
+  name: string;
+  siteId: number | null;
+  siteDomain: string | null;
+  appId: number | null;
+  appName: string | null;
+  createdAt: string;
+};
+
+export type DatabaseGrant = {
+  databaseId: number;
+  databaseName: string;
+  level: AccessLevel;
+};
+
+export type DatabaseUser = {
+  id: number;
+  engine: DatabaseEngine;
+  name: string;
+  grants: DatabaseGrant[];
   createdAt: string;
 };
 
