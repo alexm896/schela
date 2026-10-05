@@ -9,13 +9,9 @@ artifacts
 .DS_Store
 .env
 .env.*
-.grok/
 .tanstack/
 .project_id
 .node_modules.lock
-public/__grok
-AGENTS.md
-AGENTS.project.md
 pglite-debug.log
 *.tsbuildinfo
 __pycache__/
