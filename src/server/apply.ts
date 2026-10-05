@@ -6,6 +6,7 @@ import {
 import { DATABASE_ENGINE_KEYS, isAccessLevel, type DatabaseEngine } from "@/lib/panel/databases";
 import { parseWorkerCommand } from "@/lib/panel/workers";
 import { mapApp } from "@/features/apps/map";
+import { cronUser } from "@/features/cron/cron";
 import { mapModule } from "@/features/modules/map";
 import { mapSite } from "@/features/sites/map";
 import { mapRecord, mapZone } from "@/features/dns/map";
@@ -224,16 +225,7 @@ export async function dumpAndApply(sql: Sql): Promise<void> {
       .filter((row) => row.enabled === true || row.enabled === "t" || row.enabled === 1)
       .map((row) => {
         const kind = row.kind === "app" ? "app" : "site";
-        const appName = String(row.app_name || "");
-        const slug = appName
-          .toLowerCase()
-          .replace(/[^a-z0-9]+/g, "-")
-          .replace(/^-|-$/g, "")
-          .slice(0, 20);
-        const user =
-          kind === "site"
-            ? String(row.site_user || "")
-            : `sa_${slug || "app"}`;
+        const user = cronUser(kind, String(row.site_user || ""), String(row.app_name || ""));
         const cwd =
           kind === "site" ? `/home/${user}/www` : `/home/${user}/app`;
         return {

@@ -23,7 +23,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { assignIp, createIp, deleteIp, listIps } from "@/lib/panel/ops";
+import { assignIp, createIp, deleteIp, listIps } from "@/features/ips/api";
 
 export const Route = createFileRoute("/_panel/ips")({
   loader: () => listIps(),

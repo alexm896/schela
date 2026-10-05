@@ -1,14 +1,7 @@
-export function isIpv4(raw: string): boolean {
-  const parts = raw.trim().split(".");
-  if (parts.length !== 4) return false;
-  return parts.every((p) => /^(0|[1-9]\d{0,2})$/.test(p) && Number(p) <= 255);
-}
+// Cron jobs that run as a site or app user. Pure, shared by the server
+// functions, the state dump, the UI and the tests.
 
-export function normalizeIp(raw: string): string {
-  const s = raw.trim();
-  if (!isIpv4(s)) throw new Error("Enter an IPv4 address, like 203.0.113.10");
-  return s;
-}
+import { appSystemUser } from "../apps/apps.ts";
 
 const CRON_FIELD = /^(\*(\/[1-9]\d*)?|([0-9]{1,2})(-[0-9]{1,2})?(\/[1-9]\d*)?)(,(([0-9]{1,2})(-[0-9]{1,2})?(\/[1-9]\d*)?|\*(\/[1-9]\d*)?))*$/;
 
@@ -38,3 +31,9 @@ export const CRON_PRESETS = [
   { label: "Weekly, Sunday 03:00", value: "0 3 * * 0" },
   { label: "Monthly, 1st 03:00", value: "0 3 1 * *" },
 ] as const;
+
+/** The system user a job runs as: the site's jail user, or the app's `sa_` user. */
+export function cronUser(kind: "site" | "app", siteUser: string | null, appName: string | null): string {
+  if (kind === "site") return siteUser || "";
+  return appSystemUser(appName || "app");
+}

@@ -24,8 +24,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { CRON_PRESETS } from "@/lib/panel/net";
-import { createCron, deleteCron, listCron, toggleCron } from "@/lib/panel/ops";
+import { CRON_PRESETS } from "@/features/cron/cron";
+import { createCron, deleteCron, listCron, toggleCron } from "@/features/cron/api";
 import { appSystemUser } from "@/features/apps/apps";
 
 export const Route = createFileRoute("/_panel/cron")({

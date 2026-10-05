@@ -6,27 +6,6 @@ import {
   destinationSummary,
   parseBackupScope,
 } from "./backup.ts";
-import {
-  assertCronCommand,
-  assertCronSchedule,
-  isIpv4,
-  normalizeIp,
-} from "./net.ts";
-
-describe("IP + cron", () => {
-  it("accepts dotted IPv4 and five-field cron", () => {
-    assert.equal(isIpv4("203.0.113.10"), true);
-    assert.equal(isIpv4("256.1.1.1"), false);
-    assert.equal(normalizeIp(" 10.0.0.2 "), "10.0.0.2");
-    assert.throws(() => normalizeIp("example.com"), /IPv4/);
-    assert.equal(assertCronSchedule("*/5 * * * *"), "*/5 * * * *");
-    assert.equal(assertCronSchedule("0 3 1 * 0"), "0 3 1 * 0");
-    assert.throws(() => assertCronSchedule("0 3 * *"), /five/);
-    assert.throws(() => assertCronSchedule("* * * * *; rm"), /five/);
-    assert.equal(assertCronCommand("php artisan schedule:run"), "php artisan schedule:run");
-    assert.throws(() => assertCronCommand("echo %"), /newlines or %/);
-  });
-});
 
 describe("backup destinations", () => {
   it("accepts rsync and S3 targets and lists local+remotes together", () => {

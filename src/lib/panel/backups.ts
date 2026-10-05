@@ -22,7 +22,7 @@ import {
 import { mapApp } from "@/features/apps/map";
 import { mapSite } from "@/features/sites/map";
 import { mapBackupJob } from "./map";
-import { assertCronSchedule } from "./net";
+import { assertCronSchedule } from "@/features/cron/cron";
 
 function backupRoot(): string {
   if (isVpsApply()) return "/var/lib/schela/backups";

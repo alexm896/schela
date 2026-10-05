@@ -33,7 +33,7 @@ import {
   toggleBackupJob,
   updateBackupJob,
 } from "@/lib/panel/backups";
-import { CRON_PRESETS } from "@/lib/panel/net";
+import { CRON_PRESETS } from "@/features/cron/cron";
 import { formatSize } from "@/lib/panel/file-types";
 
 export const Route = createFileRoute("/_panel/backups")({
