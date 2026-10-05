@@ -1,7 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
-import { authMiddleware } from "@/lib/auth/middleware";
-import { getSql } from "@/lib/db";
-import { isVpsApply } from "./apply";
+import { authMiddleware } from "@/auth/middleware";
+import { getSql } from "@/server/db";
+import { isVpsApply } from "@/server/env";
 import { emptyRedisStatus, parseRedisInfo, type RedisStatus } from "./redis";
 
 async function moduleWanted(): Promise<boolean> {

@@ -1,12 +1,12 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useState, type FormEvent } from "react";
 import { toast } from "sonner";
-import { SchelaMark } from "@/components/schela-mark";
+import { SchelaMark } from "@/components/layout/schela-mark";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { authClient } from "@/lib/auth/client";
-import { loginEmails } from "@/lib/panel/admin-id";
+import { authClient } from "@/auth/client";
+import { loginEmails } from "@/auth/admin-id";
 import { adminStatus, createFirstAdmin, getLoginInfo } from "@/lib/panel/server";
 
 export const Route = createFileRoute("/login")({

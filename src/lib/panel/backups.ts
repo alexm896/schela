@@ -4,9 +4,11 @@ import path from "node:path";
 import { gzipSync } from "node:zlib";
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
-import { authMiddleware } from "@/lib/auth/middleware";
-import { getSql, type Sql } from "@/lib/db";
-import { applyAfterChange } from "./apply";
+import { authMiddleware } from "@/auth/middleware";
+import { getSql, type Sql } from "@/server/db";
+import { logActivity } from "@/server/activity";
+import { applyAfterChange } from "@/server/apply";
+import { isVpsApply } from "@/server/env";
 import {
   assertRsyncDest,
   assertS3Bucket,
@@ -20,10 +22,6 @@ import {
 import { mapApp, mapBackupJob, mapSite } from "./map";
 import { assertCronSchedule } from "./net";
 
-function isVpsApply(): boolean {
-  return process.env.SCHELA_APPLY === "1";
-}
-
 function backupRoot(): string {
   if (isVpsApply()) return "/var/lib/schela/backups";
   return path.join(tmpdir(), "schela-files", "backups");
@@ -31,10 +29,6 @@ function backupRoot(): string {
 
 function historyPath(): string {
   return path.join(backupRoot(), "history.jsonl");
-}
-
-async function logActivity(sql: Sql, kind: string, message: string) {
-  await sql`insert into activity (kind, message) values (${kind}, ${message})`;
 }
 
 async function listJobRows(sql: Sql): Promise<BackupJob[]> {

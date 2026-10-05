@@ -1,7 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
-import { getSql } from "@/lib/db";
-import { isVpsApply } from "@/lib/panel/apply";
+import { getSql } from "@/server/db";
+import { isVpsApply } from "@/server/env";
 import { verifyMailboxPassword } from "@/lib/panel/mail-pass";
 import { demoStore } from "./demo";
 import { withImap, type MailBody, type MailListItem } from "./imap";
@@ -50,7 +50,7 @@ async function hitLogin(addr: string): Promise<void> {
 }
 
 async function sameSite() {
-  const { assertSameSiteRequest } = await import("@/lib/auth/isolation.server");
+  const { assertSameSiteRequest } = await import("@/auth/isolation.server");
   assertSameSiteRequest();
 }
 

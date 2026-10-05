@@ -1,5 +1,5 @@
-import type { Sql } from "@/lib/db";
-import { publicIp, isVpsApply } from "./apply";
+import type { Sql } from "@/server/db";
+import { dnsRecordIp } from "@/server/env";
 
 export function zoneAndHost(fqdn: string): { zone: string; host: string } {
   const clean = fqdn.trim().toLowerCase().replace(/\.$/, "");
@@ -32,7 +32,7 @@ export async function ensureZone(
     returning id, name
   `;
   const zone = rows[0];
-  const ip = isVpsApply() ? publicIp() : "203.0.113.10";
+  const ip = dnsRecordIp();
   await sql`
     insert into dns_records (zone_id, type, name, value, ttl, priority)
     values
@@ -75,7 +75,7 @@ export async function ensureHostDns(sql: Sql, fqdn: string, bindIp?: string): Pr
   const { zone, host } = zoneAndHost(fqdn);
   if (!zone) return;
   const z = await ensureZone(sql, zone);
-  const ip = bindIp || (isVpsApply() ? publicIp() : "203.0.113.10");
+  const ip = bindIp || dnsRecordIp();
   await upsertRecord(sql, z.id, "A", host, ip, 300, null);
   if (host === "@") {
     await upsertRecord(sql, z.id, "A", "www", ip, 300, null);
@@ -127,7 +127,7 @@ export async function ensureMailDns(sql: Sql, address: string): Promise<void> {
   const domain = mailboxDomain(address);
   if (!domain.includes(".")) return;
   const z = await ensureZone(sql, domain);
-  const ip = isVpsApply() ? publicIp() : "203.0.113.10";
+  const ip = dnsRecordIp();
   const wanted = mailDnsBlueprint(domain, ip);
   for (const rec of wanted) {
     await upsertRecord(sql, z.id, rec.type, rec.name, rec.value, rec.ttl, rec.priority);
@@ -138,7 +138,7 @@ export async function describeMailDns(
   sql: Sql,
   domain: string,
 ): Promise<{ domain: string; records: MailDnsRow[] }> {
-  const ip = isVpsApply() ? publicIp() : "203.0.113.10";
+  const ip = dnsRecordIp();
   const wanted = mailDnsBlueprint(domain, ip);
   const zone = (
     await sql<{ id: number }>`select id from dns_zones where name = ${domain}`

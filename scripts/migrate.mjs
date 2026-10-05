@@ -10,7 +10,7 @@
  * is not applied to an app that never asked for sign-in.
  *
  * No DATABASE_URL (local / preview builds) -> skip; the PGLite fallback applies
- * the same files at startup instead (see src/lib/db.ts).
+ * the same files at startup instead (see src/server/db.ts).
  */
 import { readdir, readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";

@@ -1,3 +1,4 @@
+import type { Activity } from "@/server/activity";
 import type { AccessLevel, DatabaseEngine } from "./databases";
 
 export const PHP_VERSIONS = ["8.1", "8.2", "8.3", "8.4"] as const;
@@ -156,13 +157,6 @@ export type DnsRecord = {
   value: string;
   ttl: number;
   priority: number | null;
-};
-
-export type Activity = {
-  id: number;
-  kind: string;
-  message: string;
-  createdAt: string;
 };
 
 export type PanelSettings = {

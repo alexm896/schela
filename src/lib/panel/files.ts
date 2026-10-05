@@ -18,6 +18,7 @@ import {
   type FileEntry,
   type FileListing,
 } from "./file-types.ts";
+import { isVpsApply } from "../../server/env.ts";
 
 export type JailSeed = {
   kind: "site" | "app";
@@ -50,10 +51,6 @@ export type {
   FileTarget,
   FileTargetKind,
 } from "./file-types.ts";
-
-function isVpsApply(): boolean {
-  return process.env.SCHELA_APPLY === "1";
-}
 
 function isInside(root: string, target: string): boolean {
   const a = path.resolve(root);

@@ -1,4 +1,4 @@
-import { getSql } from "../db";
+import { getSql } from "@/server/db";
 
 /**
  * Schela has exactly one account: the panel admin. Nothing over HTTP can create

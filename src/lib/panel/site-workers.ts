@@ -1,10 +1,12 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
-import { authMiddleware } from "@/lib/auth/middleware";
-import { getSql, type Sql } from "@/lib/db";
-import { applyAfterChange, isVpsApply } from "./apply";
+import { authMiddleware } from "@/auth/middleware";
+import { getSql, type Sql } from "@/server/db";
+import { logActivity } from "@/server/activity";
+import { applyAfterChange } from "@/server/apply";
+import { isVpsApply } from "@/server/env";
 import { mapWorker } from "./map";
-import { runSudoHelper } from "./sudo-helper";
+import { runSudoHelper } from "@/server/sudo-helper";
 import type { SiteWorker } from "./types";
 import {
   parseSystemctlShow,
@@ -19,10 +21,6 @@ export type SiteWorkerWithStatus = SiteWorker & {
 
 const HELPER = "/usr/local/sbin/schela-workers";
 const SHOW_PROPS = "Id,ActiveState,SubState,NRestarts,ActiveEnterTimestamp,MemoryCurrent,MainPID";
-
-async function logActivity(sql: Sql, kind: string, message: string) {
-  await sql`insert into activity (kind, message) values (${kind}, ${message})`;
-}
 
 async function siteLabel(sql: Sql, siteId: number): Promise<string> {
   const rows = await sql<{ domain: string }>`select domain from sites where id = ${siteId}`;

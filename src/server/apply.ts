@@ -1,4 +1,4 @@
-import type { Sql } from "@/lib/db";
+import type { Sql } from "@/server/db";
 import {
   mapApp,
   mapBackupJob,
@@ -8,14 +8,11 @@ import {
   mapSite,
   mapWorker,
   mapZone,
-} from "./map";
-import { DATABASE_ENGINE_KEYS, isAccessLevel, type DatabaseEngine } from "./databases";
-import { parseWorkerCommand } from "./workers";
-import type { LiveMetrics } from "./types";
-
-export function isVpsApply(): boolean {
-  return process.env.SCHELA_APPLY === "1";
-}
+} from "@/lib/panel/map";
+import { DATABASE_ENGINE_KEYS, isAccessLevel, type DatabaseEngine } from "@/lib/panel/databases";
+import { parseWorkerCommand } from "@/lib/panel/workers";
+import type { LiveMetrics } from "@/lib/panel/types";
+import { isVpsApply } from "./env";
 
 function statePath(): string {
   const fromEnv = process.env.SCHELA_STATE?.trim();
@@ -353,8 +350,4 @@ export async function readHostMetrics(): Promise<LiveMetrics | null> {
     console.error("[schela] host metrics:", err);
     return null;
   }
-}
-
-export function publicIp(): string {
-  return process.env.SCHELA_PUBLIC_IP?.trim() || "127.0.0.1";
 }

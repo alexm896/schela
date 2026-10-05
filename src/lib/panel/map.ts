@@ -1,7 +1,7 @@
+import { bool, iso, nullableNum, nullableText, num } from "@/server/rows";
 import type { BackupJob, BackupScope } from "./backup";
 import { isAccessLevel, type DatabaseEngine } from "./databases";
 import type {
-  Activity,
   CronJob,
   DatabaseGrant,
   DatabaseUser,
@@ -16,20 +16,6 @@ import type {
   Site,
   SiteWorker,
 } from "./types";
-
-function iso(value: unknown) {
-  if (value instanceof Date) return value.toISOString();
-  if (typeof value === "string") return value;
-  return new Date().toISOString();
-}
-
-function bool(value: unknown) {
-  return value === true || value === "t" || value === "true" || value === 1;
-}
-
-function num(value: unknown) {
-  return typeof value === "number" ? value : Number(value ?? 0);
-}
 
 export function mapSite(row: Record<string, unknown>): Site {
   const status = row.status === "stopped" ? "stopped" : "active";
@@ -124,14 +110,6 @@ export function mapWorker(row: Record<string, unknown>): SiteWorker {
 
 function engine(value: unknown): DatabaseEngine {
   return value === "postgresql" ? "postgresql" : "mariadb";
-}
-
-function nullableNum(value: unknown): number | null {
-  return value == null || value === "" ? null : num(value);
-}
-
-function nullableText(value: unknown): string | null {
-  return value == null || value === "" ? null : String(value);
 }
 
 export function mapDatabase(row: Record<string, unknown>): ManagedDatabase {
@@ -249,14 +227,5 @@ export function mapModule(row: Record<string, unknown>): ModuleRow {
     enabled: bool(row.enabled),
     core: bool(row.core),
     sortOrder: num(row.sort_order),
-  };
-}
-
-export function mapActivity(row: Record<string, unknown>): Activity {
-  return {
-    id: num(row.id),
-    kind: String(row.kind),
-    message: String(row.message),
-    createdAt: iso(row.created_at),
   };
 }

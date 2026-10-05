@@ -1,4 +1,4 @@
-import { createAdminUser, userCount } from "@/lib/auth/admin.server";
+import { createAdminUser, userCount } from "@/auth/admin.server";
 import { DEFAULT_ADMIN_EMAIL, toAuthEmail } from "./admin-id";
 
 type BootstrapFile = { email: string; password: string; name?: string };

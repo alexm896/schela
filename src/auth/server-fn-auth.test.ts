@@ -8,7 +8,8 @@ import { fileURLToPath } from "node:url";
 // each one must check the caller. This scans the source so a new function
 // without authMiddleware fails the build instead of shipping.
 
-const LIB = fileURLToPath(new URL(".", import.meta.url));
+const SRC = fileURLToPath(new URL("..", import.meta.url));
+const WEBMAIL_DIR = "lib/webmail/";
 
 /** Panel functions that must work before sign-in, and why. */
 const PUBLIC_PANEL_FNS: Record<string, string> = {
@@ -34,7 +35,7 @@ function sourceFiles(dir: string): string[] {
 
 function serverFns(): ServerFn[] {
   const found: ServerFn[] = [];
-  for (const file of sourceFiles(LIB)) {
+  for (const file of sourceFiles(SRC)) {
     const text = readFileSync(file, "utf8");
     const starts = [...text.matchAll(/export const (\w+) = createServerFn\(/g)];
     starts.forEach((m, i) => {
@@ -43,7 +44,7 @@ function serverFns(): ServerFn[] {
       const at = block.indexOf(".handler(");
       found.push({
         name: m[1],
-        file: relative(LIB, file),
+        file: relative(SRC, file),
         chain: at === -1 ? block : block.slice(0, at),
         body: at === -1 ? "" : block.slice(at),
       });
@@ -64,7 +65,7 @@ describe("server function auth coverage", () => {
 
   it("requires authMiddleware on every panel function outside the public list", () => {
     const missing = fns
-      .filter((f) => !f.file.startsWith("webmail/"))
+      .filter((f) => !f.file.startsWith(WEBMAIL_DIR))
       .filter((f) => !(f.name in PUBLIC_PANEL_FNS))
       .filter((f) => !/\.middleware\(\[\s*authMiddleware\b/.test(f.chain))
       .map((f) => `${f.file}: ${f.name}`);
@@ -79,7 +80,7 @@ describe("server function auth coverage", () => {
 
   it("requires a mailbox session in every webmail function that reads or changes mail", () => {
     const missing = fns
-      .filter((f) => f.file.startsWith("webmail/"))
+      .filter((f) => f.file.startsWith(WEBMAIL_DIR))
       .filter((f) => !WEBMAIL_SESSIONLESS.has(f.name))
       .filter((f) => !/\bsessionOrThrow\(\)/.test(f.body))
       .map((f) => `${f.file}: ${f.name}`);
@@ -88,7 +89,7 @@ describe("server function auth coverage", () => {
 });
 
 describe("auth configuration", () => {
-  const server = readFileSync(join(LIB, "auth/server.ts"), "utf8");
+  const server = readFileSync(join(SRC, "auth/server.ts"), "utf8");
 
   it("does not let anyone register an account over HTTP", () => {
     assert.match(server, /emailAndPassword:\s*\{\s*enabled:\s*true,\s*disableSignUp:\s*true\s*\}/);
@@ -102,7 +103,7 @@ describe("auth configuration", () => {
   });
 
   it("checks the session row on every server call, not the cookie cache", () => {
-    const verify = readFileSync(join(LIB, "auth/verify.server.ts"), "utf8");
+    const verify = readFileSync(join(SRC, "auth/verify.server.ts"), "utf8");
     assert.match(verify, /getSession\(\{[\s\S]*disableCookieCache:\s*true/);
   });
 });

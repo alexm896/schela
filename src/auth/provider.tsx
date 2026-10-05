@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
  *
  *   <AuthProvider><Outlet /></AuthProvider>
  *
- * Better Auth's React client (`@/lib/auth/client`) needs NO context provider —
+ * Better Auth's React client (`@/auth/client`) needs NO context provider —
  * its `useSession()` works standalone — so this is a passthrough today. It's
  * kept as the single, stable mount point for any future client-side providers
  * (e.g. a toast or theme provider) without churning the root shell.
