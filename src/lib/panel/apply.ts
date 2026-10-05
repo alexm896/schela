@@ -9,6 +9,7 @@ import {
   mapWorker,
   mapZone,
 } from "./map";
+import { DATABASE_ENGINE_KEYS, isAccessLevel, type DatabaseEngine } from "./databases";
 import { parseWorkerCommand } from "./workers";
 import type { LiveMetrics } from "./types";
 
@@ -20,6 +21,47 @@ function statePath(): string {
   const fromEnv = process.env.SCHELA_STATE?.trim();
   if (fromEnv) return fromEnv;
   return "/var/lib/schela/state.json";
+}
+
+type DatabaseEngineState = {
+  databases: { name: string }[];
+  users: {
+    name: string;
+    passwordHash: string;
+    grants: { database: string; level: string }[];
+  }[];
+};
+
+/** What schela-db creates and grants, per engine. Hashes only, never passwords. */
+async function databaseState(sql: Sql): Promise<Record<DatabaseEngine, DatabaseEngineState>> {
+  const databases = await sql<{ engine: string; name: string }>`
+    select engine, name from databases order by name
+  `;
+  const users = await sql<{ id: number; engine: string; name: string; password_hash: string }>`
+    select id, engine, name, password_hash from database_users order by name
+  `;
+  const grants = await sql<{ user_id: number; database: string; level: string }>`
+    select database_grants.user_id, databases.name as database, database_grants.level
+    from database_grants
+    join databases on databases.id = database_grants.database_id
+    order by databases.name
+  `;
+  const out = {} as Record<DatabaseEngine, DatabaseEngineState>;
+  for (const engine of DATABASE_ENGINE_KEYS) {
+    out[engine] = {
+      databases: databases.filter((d) => d.engine === engine).map((d) => ({ name: d.name })),
+      users: users
+        .filter((u) => u.engine === engine)
+        .map((u) => ({
+          name: u.name,
+          passwordHash: u.password_hash,
+          grants: grants
+            .filter((g) => Number(g.user_id) === Number(u.id) && isAccessLevel(g.level))
+            .map((g) => ({ database: g.database, level: g.level })),
+        })),
+    };
+  }
+  return out;
 }
 
 export async function dumpAndApply(sql: Sql): Promise<void> {
@@ -110,6 +152,8 @@ export async function dumpAndApply(sql: Sql): Promise<void> {
       },
     ];
   });
+
+  const managedDatabases = await databaseState(sql);
 
   const moduleMap: Record<string, boolean> = {};
   for (const m of modules) moduleMap[m.slug] = m.enabled;
@@ -206,6 +250,7 @@ export async function dumpAndApply(sql: Sql): Promise<void> {
         };
       }),
     workers,
+    databases: managedDatabases,
     dns: {
       zones: zones.map((zone) => ({
         name: zone.name,

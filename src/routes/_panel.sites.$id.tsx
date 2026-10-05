@@ -3,6 +3,7 @@ import { ArrowLeft, FolderLock, FolderOpen, User } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/page-header";
+import { SiteDatabasesCard } from "@/components/site-databases";
 import { SiteWorkersCard } from "@/components/site-workers";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -347,6 +348,7 @@ function SiteDetail() {
         phpVersion={site.phpVersion}
         siteActive={site.status === "active"}
       />
+      <SiteDatabasesCard siteId={site.id} domain={site.domain} />
     </div>
   );
 }

@@ -7,7 +7,7 @@ fail() { printf 'FAIL %s\n' "$*" >&2; exit 1; }
 pass() { printf 'ok   %s\n' "$*"; }
 
 echo "== syntax"
-python3 -m py_compile "$INS/schela-files" "$INS/schela-backup" "$INS/schela-workers"
+python3 -m py_compile "$INS/schela-files" "$INS/schela-backup" "$INS/schela-workers" "$INS/schela-db"
 bash -n "$INS/schela-apply"
 bash -n "$INS/schela"
 bash -n "$INS/install.sh"
@@ -22,6 +22,9 @@ pass "sudoers pins backup argv"
 grep -qx 'schela ALL=(root) NOPASSWD: /usr/local/sbin/schela-workers' "$INS/templates/sudoers" \
   || fail "sudoers must allow schela-workers"
 pass "sudoers allows schela-workers"
+grep -qx 'schela ALL=(root) NOPASSWD: /usr/local/sbin/schela-db ""' "$INS/templates/sudoers" \
+  || fail "sudoers must allow schela-db with no arguments only"
+pass "sudoers pins schela-db to no arguments"
 
 echo "== schela-files jail"
 id -u s_demo >/dev/null 2>&1 || useradd --home /home/s_demo --create-home --shell /usr/sbin/nologin s_demo
@@ -500,5 +503,7 @@ for bin in systemctl journalctl; do
   [ -e "/usr/bin/$bin.real" ] && mv "/usr/bin/$bin.real" "/usr/bin/$bin"
 done
 unset SCHELA_SYSTEMD_DIR
+
+bash "$ROOT/installer/test/databases.sh"
 
 echo "== all installer security tests passed"

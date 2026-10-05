@@ -817,6 +817,123 @@ EOF
   fi
 }
 
+# --- databases (MariaDB, PostgreSQL) ----------------------------------------
+# The engine is installed when its module is turned on and only stopped when it
+# is turned off: the package and the data stay. Databases, users and access are
+# synced by schela-db, which never drops anything.
+DB_SYNC="${SCHELA_DB:-/usr/local/sbin/schela-db}"
+DB_FAILED=0
+
+apt_install() {
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update -y >/dev/null
+  apt-get install -y --no-install-recommends "$@"
+}
+
+# Write a managed config file; returns 0 when its content changed.
+write_if_changed() {
+  dest="$1"
+  content="$2"
+  if [ -f "$dest" ] && [ "$(cat "$dest")" = "$content" ]; then
+    return 1
+  fi
+  printf '%s\n' "$content" >"$dest"
+  chmod 644 "$dest"
+  return 0
+}
+
+db_sync() {
+  "$DB_SYNC" sync "$1" || { log "$1: database sync failed"; DB_FAILED=1; }
+}
+
+apply_mariadb() {
+  if ! mod_on mariadb; then
+    if [ "$DRY" -eq 1 ]; then
+      log "would stop mariadb (keep package and data, no boot start)"
+    elif [ -f /etc/mysql/mariadb.conf.d/99-schela.cnf ]; then
+      # Only a server schela set up; a MariaDB installed by hand is left alone.
+      log "mariadb off: stop, disable boot start (package and data stay)"
+      systemctl disable --now mariadb >/dev/null 2>&1 || true
+    fi
+    return 0
+  fi
+  if [ "$DRY" -eq 1 ]; then
+    log "would install/enable mariadb and sync databases"
+    return 0
+  fi
+  if ! command -v mariadbd >/dev/null 2>&1 && [ ! -x /usr/sbin/mariadbd ]; then
+    log "installing mariadb-server"
+    apt_install mariadb-server mariadb-client
+  fi
+  restart=0
+  mkdir -p /etc/mysql/mariadb.conf.d
+  if write_if_changed /etc/mysql/mariadb.conf.d/99-schela.cnf "# Managed by schela-apply.
+[mysqld]
+bind-address = 127.0.0.1
+character-set-server = utf8mb4
+collation-server = utf8mb4_unicode_ci"; then
+    restart=1
+  fi
+  systemctl unmask mariadb >/dev/null 2>&1 || true
+  systemctl enable mariadb >/dev/null 2>&1 || true
+  if [ "$restart" -eq 1 ]; then
+    systemctl restart mariadb || { log "mariadb did not start"; DB_FAILED=1; return 0; }
+  else
+    systemctl start mariadb || { log "mariadb did not start"; DB_FAILED=1; return 0; }
+  fi
+  for _ in $(seq 1 30); do
+    mariadb-admin --protocol=socket ping >/dev/null 2>&1 && break
+    sleep 1
+  done
+  db_sync mariadb
+}
+
+pg_conf_dir() {
+  ls -d /etc/postgresql/*/main 2>/dev/null | sort -V | tail -1
+}
+
+apply_postgresql() {
+  if ! mod_on postgresql; then
+    if [ "$DRY" -eq 1 ]; then
+      log "would stop postgresql (keep package and data, no boot start)"
+    elif [ -n "$(pg_conf_dir)" ] && [ -f "$(pg_conf_dir)/conf.d/99-schela.conf" ]; then
+      # Only a server schela set up; a PostgreSQL installed by hand is left alone.
+      log "postgresql off: stop, disable boot start (package and data stay)"
+      systemctl disable --now postgresql >/dev/null 2>&1 || true
+    fi
+    return 0
+  fi
+  if [ "$DRY" -eq 1 ]; then
+    log "would install/enable postgresql and sync databases"
+    return 0
+  fi
+  if ! ls /usr/lib/postgresql/*/bin/postgres >/dev/null 2>&1; then
+    log "installing postgresql"
+    apt_install postgresql postgresql-client
+  fi
+  conf="$(pg_conf_dir)"
+  [ -n "$conf" ] || { log "postgresql: no cluster under /etc/postgresql"; DB_FAILED=1; return 0; }
+  restart=0
+  mkdir -p "$conf/conf.d"
+  if write_if_changed "$conf/conf.d/99-schela.conf" "# Managed by schela-apply.
+listen_addresses = 'localhost'
+password_encryption = 'scram-sha-256'"; then
+    restart=1
+  fi
+  systemctl unmask postgresql >/dev/null 2>&1 || true
+  systemctl enable postgresql >/dev/null 2>&1 || true
+  if [ "$restart" -eq 1 ]; then
+    systemctl restart postgresql || { log "postgresql did not start"; DB_FAILED=1; return 0; }
+  else
+    systemctl start postgresql || { log "postgresql did not start"; DB_FAILED=1; return 0; }
+  fi
+  for _ in $(seq 1 30); do
+    pg_isready -q >/dev/null 2>&1 && break
+    sleep 1
+  done
+  db_sync postgresql
+}
+
 # --- dns -------------------------------------------------------------------
 apply_dns() {
   mod_on dns || return 0
@@ -935,6 +1052,8 @@ apply_dns
 apply_cron
 apply_backups
 apply_redis
+apply_mariadb
+apply_postgresql
 
 if [ "$DRY" -eq 0 ]; then
   mkdir -p "$ACME_ROOT/.well-known/acme-challenge"
@@ -950,4 +1069,7 @@ if [ "$DRY" -eq 0 ]; then
     systemctl reload nginx
   fi
 fi
+# A failed database sync must not hold back nginx and TLS, but the panel
+# still has to hear about it.
+[ "$DB_FAILED" -eq 0 ] || die "database changes were not fully applied (see the log above)"
 log "done"

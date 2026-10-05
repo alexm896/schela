@@ -93,6 +93,22 @@ const MODULES = [
     core: false,
     sort: 8,
   },
+  {
+    slug: "mariadb",
+    name: "MariaDB",
+    description: "MySQL-compatible databases for PHP sites. Off by default. Disable stops it; data and package stay.",
+    version: "1.0",
+    core: false,
+    sort: 9,
+  },
+  {
+    slug: "postgresql",
+    name: "PostgreSQL",
+    description: "PostgreSQL databases for Node apps and Laravel. Off by default. Disable stops it; data and package stay.",
+    version: "1.0",
+    core: false,
+    sort: 10,
+  },
 ] as const;
 
 async function logActivity(sql: Sql, kind: string, message: string) {
@@ -143,13 +159,16 @@ async function readSettings(sql: Sql): Promise<PanelSettings> {
 }
 
 async function seedModules(sql: Sql, enabledSlugs: string[]) {
-  const existing = await sql<{ slug: string }>`select slug from modules`;
-  if (existing.length > 0) return;
+  const existing = new Set((await sql<{ slug: string }>`select slug from modules`).map((r) => r.slug));
+  const fresh = existing.size === 0;
   for (const mod of MODULES) {
-    const enabled = enabledSlugs.includes(mod.slug);
+    if (existing.has(mod.slug)) continue;
+    // A module added in a later release starts off on an existing install.
+    const enabled = fresh && enabledSlugs.includes(mod.slug);
     await sql`
       insert into modules (slug, name, description, version, enabled, core, sort_order)
       values (${mod.slug}, ${mod.name}, ${mod.description}, ${mod.version}, ${enabled}, ${mod.core}, ${mod.sort})
+      on conflict (slug) do nothing
     `;
   }
 }

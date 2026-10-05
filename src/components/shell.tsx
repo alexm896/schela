@@ -4,6 +4,7 @@ import {
   Box,
   Clock,
   Database,
+  DatabaseZap,
   FolderOpen,
   Globe,
   Inbox,
@@ -29,7 +30,8 @@ type NavItem = {
   to: string;
   label: string;
   icon: typeof LayoutDashboard;
-  module?: string;
+  /** Shown when any of these modules is on. */
+  modules?: string[];
 };
 
 const NAV: { title: string; items: NavItem[] }[] = [
@@ -37,20 +39,21 @@ const NAV: { title: string; items: NavItem[] }[] = [
     title: "Hosting",
     items: [
       { to: "/", label: "Overview", icon: LayoutDashboard },
-      { to: "/sites", label: "Sites", icon: Globe, module: "php" },
-      { to: "/apps", label: "Node apps", icon: Box, module: "node" },
+      { to: "/sites", label: "Sites", icon: Globe, modules: ["php"] },
+      { to: "/apps", label: "Node apps", icon: Box, modules: ["node"] },
       { to: "/files", label: "Files", icon: FolderOpen },
-      { to: "/mail", label: "Mail", icon: Mail, module: "mail" },
-      { to: "/webmail", label: "Webmail", icon: Inbox, module: "mail" },
+      { to: "/databases", label: "Databases", icon: Database, modules: ["mariadb", "postgresql"] },
+      { to: "/mail", label: "Mail", icon: Mail, modules: ["mail"] },
+      { to: "/webmail", label: "Webmail", icon: Inbox, modules: ["mail"] },
       { to: "/cron", label: "Cron jobs", icon: Clock },
-      { to: "/redis", label: "Redis", icon: Database, module: "redis" },
+      { to: "/redis", label: "Redis", icon: DatabaseZap, modules: ["redis"] },
     ],
   },
   {
     title: "Security",
     items: [
-      { to: "/firewall", label: "Firewall", icon: Shield, module: "firewall" },
-      { to: "/dns", label: "DNS", icon: Server, module: "dns" },
+      { to: "/firewall", label: "Firewall", icon: Shield, modules: ["firewall"] },
+      { to: "/dns", label: "DNS", icon: Server, modules: ["dns"] },
       { to: "/ips", label: "IP addresses", icon: Network },
       { to: "/backups", label: "Backups", icon: Archive },
     ],
@@ -77,7 +80,7 @@ function NavList({
     <nav className="flex flex-col gap-5">
       {NAV.map((group) => {
         const items = group.items.filter(
-          (item) => !item.module || enabled.has(item.module),
+          (item) => !item.modules || item.modules.some((m) => enabled.has(m)),
         );
         if (items.length === 0) return null;
         return (

@@ -13,7 +13,7 @@
     "build:dev": "vite build --mode development",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "test": "node --test 'scripts/**/*.test.mjs' && node --experimental-strip-types --test src/lib/panel/admin-id.test.ts src/lib/panel/files.test.ts src/lib/panel/ops.test.ts src/lib/server-fn-auth.test.ts src/lib/panel/workers.test.ts src/lib/panel/site-root.test.ts src/lib/webmail/webmail.test.ts",
+    "test": "node --test 'scripts/**/*.test.mjs' && node --experimental-strip-types --test src/lib/panel/admin-id.test.ts src/lib/panel/files.test.ts src/lib/panel/ops.test.ts src/lib/server-fn-auth.test.ts src/lib/panel/workers.test.ts src/lib/panel/databases.test.ts src/lib/panel/site-root.test.ts src/lib/webmail/webmail.test.ts",
     "lint": "eslint .",
     "format": "prettier --write ."
   },
