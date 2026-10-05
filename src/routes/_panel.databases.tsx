@@ -239,16 +239,18 @@ function DatabasesPage() {
                       }))}
                     />
                   </td>
-                  <td className="whitespace-nowrap px-5 py-3 text-right">
-                    <Button variant="outline" size="sm" onClick={() => setOpen({ kind: "user", user })}>
-                      Edit access
-                    </Button>
-                    <RowMenu label={`Actions for ${user.name}`}>
-                      <DropdownMenuItem onSelect={() => void resetPassword(user)}>Reset password</DropdownMenuItem>
-                      <DropdownMenuItem variant="destructive" onSelect={() => setOpen({ kind: "delete-user", user })}>
-                        Delete user
-                      </DropdownMenuItem>
-                    </RowMenu>
+                  <td className="px-5 py-3">
+                    <div className="flex items-center justify-end gap-1">
+                      <Button variant="outline" size="sm" onClick={() => setOpen({ kind: "user", user })}>
+                        Edit access
+                      </Button>
+                      <RowMenu label={`Actions for ${user.name}`}>
+                        <DropdownMenuItem onSelect={() => void resetPassword(user)}>Reset password</DropdownMenuItem>
+                        <DropdownMenuItem variant="destructive" onSelect={() => setOpen({ kind: "delete-user", user })}>
+                          Delete user
+                        </DropdownMenuItem>
+                      </RowMenu>
+                    </div>
                   </td>
                 </tr>
               ))}
