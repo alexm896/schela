@@ -1,11 +1,11 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { Database } from "lucide-react";
 import { toast } from "sonner";
-import { PageHeader } from "@/components/page-header";
+import { PageHeader } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { getRedisStatus } from "@/lib/panel/redis-status";
+import { getRedisStatus } from "@/features/redis/api";
 
 export const Route = createFileRoute("/_panel/redis")({
   loader: () => getRedisStatus(),

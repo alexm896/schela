@@ -4,10 +4,10 @@ import {
   Outlet,
   Scripts,
 } from "@tanstack/react-router";
-import { AuthProvider } from "@/lib/auth/provider";
+import { Toaster } from "sonner";
+import { AuthProvider } from "@/auth/provider";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { themeBootScript, useTheme } from "@/lib/theme";
-import { Toaster } from "sonner";
 import appCss from "../styles.css?url";
 
 const APP_NAME = "Schela";

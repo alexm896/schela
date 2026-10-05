@@ -2,7 +2,7 @@ import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import { Box, FolderOpen, MoreHorizontal, Plus } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
-import { PageHeader } from "@/components/page-header";
+import { PageHeader } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -29,9 +29,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { createApp, deleteApp, listApps, updateApp } from "@/lib/panel/server";
-import { NODE_VERSIONS } from "@/lib/panel/types";
-import { nodeUserFromDomain } from "@/lib/utils";
+import { createApp, deleteApp, listApps, updateApp } from "@/features/apps/api";
+import { NODE_VERSIONS, nodeUserFromDomain } from "@/features/apps/apps";
 
 export const Route = createFileRoute("/_panel/apps")({
   loader: () => listApps(),

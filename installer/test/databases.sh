@@ -7,7 +7,7 @@ INS="$ROOT/installer"
 fail() { printf 'FAIL %s\n' "$*" >&2; exit 1; }
 pass() { printf 'ok   %s\n' "$*"; }
 
-# Hashes of PASS as produced by src/lib/panel/db-pass.ts (pinned by its unit tests).
+# Hashes of PASS as produced by src/features/databases/password.ts (pinned by its unit tests).
 PASS='correct horse battery staple'
 MHASH='*F4AF2E5D85456A908E0F552F0366375B06267295'
 PHASH='SCRAM-SHA-256$4096:AAECAwQFBgcICQoLDA0ODw==$ONYbSJBXtKl6bP6PVqw8pm9e7EiacprLnoUQPFS80Hw=:IPOtHuGJ2HifEQg74W2XXqqCrCyQG55GbPRHa6g6n9w='

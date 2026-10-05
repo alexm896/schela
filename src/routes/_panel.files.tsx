@@ -1,37 +1,10 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { formatDistanceToNow } from "date-fns";
-import {
-  ChevronRight,
-  Copy,
-  Download,
-  File,
-  FileCode,
-  FilePlus,
-  Folder,
-  FolderOpen,
-  FolderPlus,
-  Image as ImageIcon,
-  MoreHorizontal,
-  Pencil,
-  RefreshCw,
-  Search,
-  Trash2,
-  Upload,
-} from "lucide-react";
+import { Download, FilePlus, FolderOpen, FolderPlus, RefreshCw, Search, Trash2, Upload } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { PageHeader } from "@/components/page-header";
-import { Badge } from "@/components/ui/badge";
+import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -39,7 +12,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -47,8 +19,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Textarea } from "@/components/ui/textarea";
-import { formatSize, virtParent, virtSegments, type FileEntry, type FileListing } from "@/lib/panel/file-types";
 import {
   chmodFile,
   copyFile,
@@ -62,7 +32,14 @@ import {
   renameFile,
   uploadFile,
   writeFile,
-} from "@/lib/panel/file-ops";
+} from "@/features/files/api";
+import { saveBlob, toBase64 } from "@/features/files/browser";
+import { FileBreadcrumbs } from "@/features/files/components/file-breadcrumbs";
+import { FileEditorDialog, type FileEditorState } from "@/features/files/components/file-editor-dialog";
+import { FilePromptDialog, type FilePrompt } from "@/features/files/components/file-prompt-dialog";
+import { FileTable } from "@/features/files/components/file-table";
+import { ImagePreviewDialog, type ImagePreview } from "@/features/files/components/image-preview-dialog";
+import { formatSize, virtParent, type FileEntry, type FileListing } from "@/features/files/files";
 import { cn } from "@/lib/utils";
 
 type FilesSearch = {
@@ -90,37 +67,6 @@ export const Route = createFileRoute("/_panel/files")({
   component: FilesPage,
 });
 
-type PromptKind = "new-file" | "new-folder" | "rename" | "copy" | "move" | "chmod" | "delete";
-
-function iconFor(entry: FileEntry) {
-  if (entry.kind === "dir") return Folder;
-  if (entry.preview === "image") return ImageIcon;
-  if (entry.editable) return FileCode;
-  return File;
-}
-
-function toBase64(buf: ArrayBuffer): string {
-  const bytes = new Uint8Array(buf);
-  const chunk = 0x8000;
-  let binary = "";
-  for (let i = 0; i < bytes.length; i += chunk) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
-  }
-  return btoa(binary);
-}
-
-function saveBlob(name: string, b64: string, mime: string) {
-  const bin = atob(b64);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  const url = URL.createObjectURL(new Blob([bytes], { type: mime }));
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = name;
-  a.click();
-  URL.revokeObjectURL(url);
-}
-
 function FilesPage() {
   const targets = Route.useLoaderData();
   const search = Route.useSearch();
@@ -144,16 +90,9 @@ function FilesPage() {
   const [lastClicked, setLastClicked] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
 
-  const [prompt, setPrompt] = useState<{ kind: PromptKind; value: string; paths: string[] } | null>(
-    null,
-  );
-  const [editor, setEditor] = useState<{
-    path: string;
-    name: string;
-    content: string;
-    dirty: boolean;
-  } | null>(null);
-  const [preview, setPreview] = useState<{ name: string; src: string } | null>(null);
+  const [prompt, setPrompt] = useState<FilePrompt | null>(null);
+  const [editor, setEditor] = useState<FileEditorState | null>(null);
+  const [preview, setPreview] = useState<ImagePreview | null>(null);
 
   const syncSearch = useCallback(
     (next: { kind: "site" | "app"; id: number; path: string }) => {
@@ -424,7 +363,6 @@ function FilesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [path, selected, selectedEntries, visible, editor, target]);
 
-  const crumbs = virtSegments(path);
   const counts = listing
     ? {
         dirs: listing.entries.filter((e) => e.kind === "dir").length,
@@ -499,30 +437,7 @@ function FilesPage() {
       ) : null}
 
       <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <nav className="flex min-w-0 flex-wrap items-center gap-0.5 font-mono text-xs">
-          <button
-            type="button"
-            className="rounded-sm px-1.5 py-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-            onClick={() => go("/")}
-          >
-            /
-          </button>
-          {crumbs.map((seg, i) => {
-            const next = `/${crumbs.slice(0, i + 1).join("/")}`;
-            return (
-              <span key={next} className="flex items-center">
-                <ChevronRight className="size-3 text-muted-foreground/70" />
-                <button
-                  type="button"
-                  className="rounded-sm px-1.5 py-1 hover:bg-accent"
-                  onClick={() => go(next)}
-                >
-                  {seg}
-                </button>
-              </span>
-            );
-          })}
-        </nav>
+        <FileBreadcrumbs path={path} onNavigate={go} />
         <div className="flex flex-wrap items-center gap-2">
           <div className="relative">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -611,122 +526,21 @@ function FilesPage() {
           dragOver && "ring-2 ring-ring/40",
         )}
       >
-        {visible.length === 0 ? (
-          <div className="px-5 py-16 text-center text-sm text-muted-foreground">
-            {busy ? "Loading…" : filter ? "No names match." : "Empty folder. Drop files here or create one."}
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[36rem] text-left text-sm">
-              <thead className="border-b border-border text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
-                <tr>
-                  <th className="px-5 py-2.5 font-medium">Name</th>
-                  <th className="px-3 py-2.5 font-medium">Size</th>
-                  <th className="hidden px-3 py-2.5 font-medium sm:table-cell">Modified</th>
-                  <th className="hidden px-3 py-2.5 font-medium md:table-cell">Mode</th>
-                  <th className="w-12 px-3 py-2.5" />
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
-                {path !== "/" ? (
-                  <tr>
-                    <td colSpan={5}>
-                      <button
-                        type="button"
-                        className="flex w-full items-center gap-2 px-5 py-2.5 text-left text-muted-foreground hover:bg-accent/40"
-                        onClick={() => {
-                          const parent = virtParent(path);
-                          if (parent) go(parent);
-                        }}
-                      >
-                        <Folder className="size-4" />
-                        ..
-                      </button>
-                    </td>
-                  </tr>
-                ) : null}
-                {visible.map((entry) => {
-                  const Icon = iconFor(entry);
-                  const active = selected.has(entry.path);
-                  return (
-                    <tr
-                      key={entry.path}
-                      className={cn(
-                        "cursor-default hover:bg-accent/40",
-                        active && "bg-accent",
-                        entry.hidden && "text-muted-foreground",
-                      )}
-                      onClick={(e) => onRowClick(entry, e)}
-                      onDoubleClick={() => void openEntry(entry)}
-                    >
-                      <td className="px-5 py-2.5">
-                        <div className="flex min-w-0 items-center gap-2.5">
-                          <Icon className="size-4 shrink-0" />
-                          <span className="truncate font-medium">{entry.name}</span>
-                          {entry.kind === "dir" ? (
-                            <Badge variant="outline">dir</Badge>
-                          ) : null}
-                          {entry.unsafe ? <Badge variant="warn">unsafe</Badge> : null}
-                        </div>
-                      </td>
-                      <td className="px-3 py-2.5 font-mono text-xs text-muted-foreground">
-                        {entry.kind === "dir" ? "—" : formatSize(entry.size)}
-                      </td>
-                      <td className="hidden px-3 py-2.5 font-mono text-xs text-muted-foreground sm:table-cell">
-                        {formatDistanceToNow(new Date(entry.mtime), { addSuffix: true })}
-                      </td>
-                      <td className="hidden px-3 py-2.5 font-mono text-xs text-muted-foreground md:table-cell">
-                        {entry.mode}
-                      </td>
-                      <td className="px-3 py-2.5 text-right">
-                        <RowMenu
-                          entry={entry}
-                          onOpen={() => void openEntry(entry)}
-                          onDownload={() => void downloadOne(entry)}
-                          onRename={() =>
-                            setPrompt({
-                              kind: "rename",
-                              value: entry.name,
-                              paths: [entry.path],
-                            })
-                          }
-                          onCopy={() =>
-                            setPrompt({
-                              kind: "copy",
-                              value: `${entry.path}.copy`,
-                              paths: [entry.path],
-                            })
-                          }
-                          onMove={() =>
-                            setPrompt({
-                              kind: "move",
-                              value: entry.path,
-                              paths: [entry.path],
-                            })
-                          }
-                          onChmod={() =>
-                            setPrompt({
-                              kind: "chmod",
-                              value: entry.mode,
-                              paths: [entry.path],
-                            })
-                          }
-                          onDelete={() =>
-                            setPrompt({
-                              kind: "delete",
-                              value: "",
-                              paths: [entry.path],
-                            })
-                          }
-                        />
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
+        <FileTable
+          entries={visible}
+          path={path}
+          selected={selected}
+          busy={busy}
+          filter={filter}
+          onUp={() => {
+            const parent = virtParent(path);
+            if (parent) go(parent);
+          }}
+          onRowClick={onRowClick}
+          onOpen={(entry) => void openEntry(entry)}
+          onDownload={(entry) => void downloadOne(entry)}
+          onPrompt={setPrompt}
+        />
       </div>
 
       <p className="mt-3 text-xs text-muted-foreground">
@@ -741,7 +555,7 @@ function FilesPage() {
         Enter opens · Backspace up · Del removes · drop to upload · 4 MB cap
       </p>
 
-      <PromptDialog
+      <FilePromptDialog
         prompt={prompt}
         busy={busy}
         onChange={(value) => prompt && setPrompt({ ...prompt, value })}
@@ -749,183 +563,15 @@ function FilesPage() {
         onSubmit={() => void submitPrompt()}
       />
 
-      <Dialog open={Boolean(editor)} onOpenChange={(o) => !o && setEditor(null)}>
-        <DialogContent className="flex h-[min(80vh,44rem)] max-w-4xl flex-col">
-          <DialogHeader>
-            <DialogTitle className="font-mono text-base">{editor?.name}</DialogTitle>
-            <DialogDescription className="font-mono text-xs">
-              {editor?.path}
-              {editor?.dirty ? " · unsaved" : ""}
-            </DialogDescription>
-          </DialogHeader>
-          {editor ? (
-            <Textarea
-              value={editor.content}
-              onChange={(e) =>
-                setEditor({ ...editor, content: e.target.value, dirty: true })
-              }
-              spellCheck={false}
-              className="min-h-0 flex-1 resize-none font-mono text-[13px] leading-relaxed"
-            />
-          ) : null}
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setEditor(null)}>
-              Close
-            </Button>
-            <Button onClick={() => void saveEditor()} disabled={busy || !editor?.dirty}>
-              Save
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <FileEditorDialog
+        editor={editor}
+        busy={busy}
+        onChange={setEditor}
+        onClose={() => setEditor(null)}
+        onSave={() => void saveEditor()}
+      />
 
-      <Dialog open={Boolean(preview)} onOpenChange={(o) => !o && setPreview(null)}>
-        <DialogContent className="max-w-3xl">
-          <DialogHeader>
-            <DialogTitle className="font-mono text-base">{preview?.name}</DialogTitle>
-          </DialogHeader>
-          {preview ? (
-            <img
-              src={preview.src}
-              alt={preview.name}
-              className="mx-auto max-h-[60vh] rounded-md bg-secondary object-contain"
-            />
-          ) : null}
-        </DialogContent>
-      </Dialog>
+      <ImagePreviewDialog preview={preview} onClose={() => setPreview(null)} />
     </div>
-  );
-}
-
-function RowMenu({
-  entry,
-  onOpen,
-  onDownload,
-  onRename,
-  onCopy,
-  onMove,
-  onChmod,
-  onDelete,
-}: {
-  entry: FileEntry;
-  onOpen: () => void;
-  onDownload: () => void;
-  onRename: () => void;
-  onCopy: () => void;
-  onMove: () => void;
-  onChmod: () => void;
-  onDelete: () => void;
-}) {
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          aria-label={`${entry.name} actions`}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <MoreHorizontal className="size-4" />
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
-        <DropdownMenuItem onClick={onOpen}>
-          <Pencil className="size-4" />
-          {entry.kind === "dir" ? "Open" : entry.editable ? "Edit" : "Open"}
-        </DropdownMenuItem>
-        {entry.kind !== "dir" ? (
-          <DropdownMenuItem onClick={onDownload}>
-            <Download className="size-4" />
-            Download
-          </DropdownMenuItem>
-        ) : null}
-        <DropdownMenuItem onClick={onRename}>Rename</DropdownMenuItem>
-        <DropdownMenuItem onClick={onCopy}>
-          <Copy className="size-4" />
-          Copy to…
-        </DropdownMenuItem>
-        <DropdownMenuItem onClick={onMove}>Move to…</DropdownMenuItem>
-        <DropdownMenuItem onClick={onChmod}>Permissions</DropdownMenuItem>
-        <DropdownMenuItem variant="destructive" onClick={onDelete}>
-          <Trash2 className="size-4" />
-          Delete
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-}
-
-function PromptDialog({
-  prompt,
-  busy,
-  onChange,
-  onClose,
-  onSubmit,
-}: {
-  prompt: { kind: PromptKind; value: string; paths: string[] } | null;
-  busy: boolean;
-  onChange: (value: string) => void;
-  onClose: () => void;
-  onSubmit: () => void;
-}) {
-  if (!prompt) return null;
-  const titles: Record<PromptKind, string> = {
-    "new-file": "New file",
-    "new-folder": "New folder",
-    rename: "Rename",
-    copy: "Copy to",
-    move: "Move to",
-    chmod: "Permissions",
-    delete: "Delete",
-  };
-  const labels: Record<PromptKind, string> = {
-    "new-file": "Name",
-    "new-folder": "Name",
-    rename: "New name",
-    copy: "Destination path",
-    move: "Destination path",
-    chmod: "Mode (octal)",
-    delete: "",
-  };
-  const isDelete = prompt.kind === "delete";
-  return (
-    <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>{titles[prompt.kind]}</DialogTitle>
-          <DialogDescription>
-            {isDelete
-              ? `Remove ${prompt.paths.length === 1 ? prompt.paths[0] : `${prompt.paths.length} items`} from this account. Directories go recursively.`
-              : "Stays inside this site or app home."}
-          </DialogDescription>
-        </DialogHeader>
-        {!isDelete ? (
-          <div className="grid gap-2">
-            <Label>{labels[prompt.kind]}</Label>
-            <Input
-              value={prompt.value}
-              onChange={(e) => onChange(e.target.value)}
-              autoFocus
-              spellCheck={false}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") onSubmit();
-              }}
-            />
-          </div>
-        ) : null}
-        <DialogFooter>
-          <Button variant="ghost" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button
-            variant={isDelete ? "destructive" : "default"}
-            onClick={onSubmit}
-            disabled={busy || (!isDelete && !prompt.value.trim())}
-          >
-            {isDelete ? "Delete" : "OK"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
   );
 }

@@ -2,9 +2,7 @@ import { createFileRoute, Link, useNavigate, useRouter } from "@tanstack/react-r
 import { ArrowLeft, FolderLock, FolderOpen, User } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
-import { PageHeader } from "@/components/page-header";
-import { SiteDatabasesCard } from "@/components/site-databases";
-import { SiteWorkersCard } from "@/components/site-workers";
+import { PageHeader } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -18,9 +16,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { deleteSite, getSite, retrySiteTls, updateSite } from "@/lib/panel/server";
-import { PHP_VERSIONS } from "@/lib/panel/types";
-import { normalizeWebRoot, webRootFromRoot } from "@/lib/panel/site-root";
+import { SiteDatabasesCard } from "@/features/databases/components/site-databases";
+import { deleteSite, getSite, retrySiteTls, updateSite } from "@/features/sites/api";
+import { normalizeWebRoot, webRootFromRoot } from "@/features/sites/site-root";
+import { PHP_VERSIONS } from "@/features/sites/sites";
+import { SiteWorkersCard } from "@/features/workers/components/site-workers";
 
 export const Route = createFileRoute("/_panel/sites/$id")({
   loader: async ({ params }) => {

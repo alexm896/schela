@@ -2,7 +2,7 @@ import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import { Network, Plus } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
-import { PageHeader } from "@/components/page-header";
+import { PageHeader } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -23,7 +23,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { assignIp, createIp, deleteIp, listIps } from "@/lib/panel/ops";
+import { assignIp, createIp, deleteIp, listIps } from "@/features/ips/api";
 
 export const Route = createFileRoute("/_panel/ips")({
   loader: () => listIps(),

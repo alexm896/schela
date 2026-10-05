@@ -2,7 +2,7 @@ import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import { Globe, Plus } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
-import { PageHeader } from "@/components/page-header";
+import { PageHeader } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -24,9 +24,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { createSite, listSites } from "@/lib/panel/server";
-import { PHP_VERSIONS } from "@/lib/panel/types";
-import { systemUserFromDomain } from "@/lib/utils";
+import { createSite, listSites } from "@/features/sites/api";
+import { PHP_VERSIONS, systemUserFromDomain } from "@/features/sites/sites";
 
 export const Route = createFileRoute("/_panel/sites/")({
   loader: () => listSites(),

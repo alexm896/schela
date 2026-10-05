@@ -2,15 +2,7 @@ import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import { Database, KeyRound, MoreHorizontal, Plus, UserPlus } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { toast } from "sonner";
-import {
-  CredentialsDialog,
-  DatabaseUserDialog,
-  DeleteDatabaseDialog,
-  DeleteDatabaseUserDialog,
-  LinkDatabaseDialog,
-  NewDatabaseDialog,
-} from "@/components/database-dialogs";
-import { PageHeader } from "@/components/page-header";
+import { PageHeader } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -25,14 +17,22 @@ import {
   resetDatabaseUserPassword,
   type DatabaseWithSize,
   type IssuedCredentials,
-} from "@/lib/panel/databases-api";
+} from "@/features/databases/api";
+import {
+  CredentialsDialog,
+  DatabaseUserDialog,
+  DeleteDatabaseDialog,
+  DeleteDatabaseUserDialog,
+  LinkDatabaseDialog,
+  NewDatabaseDialog,
+} from "@/features/databases/components/database-dialogs";
 import {
   ACCESS_LEVELS,
   DATABASE_ENGINES,
   enabledEngines,
   formatDatabaseSize,
-} from "@/lib/panel/databases";
-import type { DatabaseUser } from "@/lib/panel/types";
+} from "@/features/databases/databases";
+import type { DatabaseUser } from "@/features/databases/types";
 
 export const Route = createFileRoute("/_panel/databases")({
   loader: () => getDatabases(),
