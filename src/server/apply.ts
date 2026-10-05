@@ -1,10 +1,10 @@
 import type { Sql } from "@/server/db";
 import {
-  mapBackupJob,
   mapWorker,
 } from "@/lib/panel/map";
 import { DATABASE_ENGINE_KEYS, isAccessLevel, type DatabaseEngine } from "@/lib/panel/databases";
 import { parseWorkerCommand } from "@/lib/panel/workers";
+import { mapBackupJob } from "@/features/backups/map";
 import { mapApp } from "@/features/apps/map";
 import { cronUser } from "@/features/cron/cron";
 import { mapModule } from "@/features/modules/map";

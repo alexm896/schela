@@ -5,7 +5,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { getRedisStatus } from "@/lib/panel/redis-status";
+import { getRedisStatus } from "@/features/redis/api";
 
 export const Route = createFileRoute("/_panel/redis")({
   loader: () => getRedisStatus(),
