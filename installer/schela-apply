@@ -38,6 +38,30 @@ bind_https() {
 
 nologin_shell() { command -v nologin 2>/dev/null || echo /usr/sbin/nologin; }
 
+# Run a command as a site user. Everything below /home/<user> belongs to that
+# user, who can replace any entry there (for example turn www into a symlink),
+# so files inside the home are created and changed with the user's own
+# permissions, never root's.
+as_user() {
+  local user="$1"
+  shift
+  runuser -u "$user" -- "$@"
+}
+
+# /home/<user> itself: created by root if missing (useradd normally does it).
+# /home is root-owned, so only root could have made this path a link; refuse
+# one rather than change whatever it points at.
+ensure_home() {
+  local user="$1" home="/home/$1"
+  if [ -L "$home" ]; then
+    log "skip $user: $home is a symlink"
+    return 1
+  fi
+  [ -d "$home" ] || install -d -o "$user" -g "$user" -m 750 "$home"
+  chown "$user:$user" "$home"
+  chmod 750 "$home"
+}
+
 [ "$(id -u)" -eq 0 ] || die "root required"
 need jq
 need nginx
@@ -142,17 +166,18 @@ apply_sites() {
 
     ensure_user "$user" "/home/$user"
     if [ "$DRY" -eq 0 ]; then
-      mkdir -p "/home/$user/www" "/home/$user/tmp" "/home/$user/logs"
+      ensure_home "$user" || continue
+      # Repairs ownership of anything root created here before; chown -R
+      # changes links themselves and does not follow them.
       chown -R "$user:$user" "/home/$user"
-      chmod 750 "/home/$user"
-      chmod 750 "/home/$user/www"
+      as_user "$user" mkdir -p "/home/$user/www" "/home/$user/tmp" "/home/$user/logs" \
+        || log "site $domain: could not create www, tmp or logs"
+      as_user "$user" chmod 750 "/home/$user/www" || log "site $domain: could not set the mode of www"
       # nginx (www-data) must traverse the jail to serve static files / try_files.
       usermod -aG "$user" www-data 2>/dev/null || true
-      if [ ! -f "/home/$user/www/index.php" ]; then
-        printf '<?php echo htmlspecialchars(%s, ENT_QUOTES, "UTF-8");\n' "'${domain}'" \
-          >"/home/$user/www/index.php"
-        chown "$user:$user" "/home/$user/www/index.php"
-      fi
+      printf '<?php echo htmlspecialchars(%s, ENT_QUOTES, "UTF-8");\n' "'${domain}'" \
+        | as_user "$user" sh -c '[ -e "$1" ] || cat >"$1"' sh "/home/$user/www/index.php" \
+        || log "site $domain: could not write the placeholder index.php"
     fi
 
     socket="/run/php/${pool}.sock"
@@ -229,8 +254,9 @@ apply_apps() {
 
     ensure_user "$user" "/home/$user"
     if [ "$DRY" -eq 0 ]; then
-      mkdir -p "/home/$user/app"
+      ensure_home "$user" || continue
       chown -R "$user:$user" "/home/$user"
+      as_user "$user" mkdir -p "/home/$user/app" || log "app $name: could not create app"
       printf 'PORT=%s\nNODE_VERSION=%s\n' "$port" "$ver" >"/var/lib/schela/apps/${user}.env"
 
       NODE_BIN="/usr/local/bin/node"
