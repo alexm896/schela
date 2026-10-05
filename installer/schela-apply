@@ -1046,6 +1046,12 @@ apply_dns() {
     chmod 644 "$zfile"
     echo "zone \"${zname}\" { type master; file \"${zfile}\"; };" >>/etc/bind/schela-zones.conf
   done < <(jq -c '.dns.zones // [] | .[]' "$STATE")
+  # A zone deleted in the panel is no longer listed; its file goes too.
+  local zf
+  for zf in "$zdir"/*.zone; do
+    [ -f "$zf" ] || continue
+    grep -qF "file \"${zf}\";" /etc/bind/schela-zones.conf || rm -f "$zf"
+  done
   grep -q 'schela-zones.conf' /etc/bind/named.conf.local 2>/dev/null || \
     echo 'include "/etc/bind/schela-zones.conf";' >>/etc/bind/named.conf.local
   named-checkconf >/dev/null 2>&1 && systemctl reload bind9 >/dev/null 2>&1 || true

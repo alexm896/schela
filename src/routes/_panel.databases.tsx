@@ -2,6 +2,7 @@ import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import { Database, KeyRound, MoreHorizontal, Plus, UserPlus } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { toast } from "sonner";
+import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
 import { PageHeader } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -13,6 +14,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
+  deleteDatabase,
+  deleteDatabaseUser,
   getDatabases,
   resetDatabaseUserPassword,
   type DatabaseWithSize,
@@ -21,8 +24,6 @@ import {
 import {
   CredentialsDialog,
   DatabaseUserDialog,
-  DeleteDatabaseDialog,
-  DeleteDatabaseUserDialog,
   LinkDatabaseDialog,
   NewDatabaseDialog,
 } from "@/features/databases/components/database-dialogs";
@@ -276,10 +277,16 @@ function DatabasesPage() {
         />
       ) : null}
       {open?.kind === "delete-database" ? (
-        <DeleteDatabaseDialog
-          database={open.database}
+        <ConfirmDeleteDialog
+          title={`Delete ${open.database.name}?`}
+          description="The database and all its data are removed from the server. Users stay but lose access to it. This cannot be undone."
+          confirmLabel="Delete database"
+          confirmText={open.database.name}
+          onConfirm={async ({ confirm }) => {
+            await deleteDatabase({ data: { id: open.database.id, confirm } });
+            await finish(null, `Deleted ${open.database.name}`);
+          }}
           onClose={() => setOpen(null)}
-          onDeleted={() => void finish(null, `Deleted ${open.database.name}`)}
         />
       ) : null}
       {open?.kind === "user" ? (
@@ -291,10 +298,15 @@ function DatabasesPage() {
         />
       ) : null}
       {open?.kind === "delete-user" ? (
-        <DeleteDatabaseUserDialog
-          user={open.user}
+        <ConfirmDeleteDialog
+          title={`Delete user ${open.user.name}?`}
+          description={`Apps that log in as ${open.user.name} stop working. The databases and their data stay.`}
+          confirmLabel="Delete user"
+          onConfirm={async () => {
+            await deleteDatabaseUser({ data: { id: open.user.id } });
+            await finish(null, `Deleted user ${open.user.name}`);
+          }}
           onClose={() => setOpen(null)}
-          onDeleted={() => void finish(null, `Deleted user ${open.user.name}`)}
         />
       ) : null}
       {open?.kind === "credentials" ? (
