@@ -243,8 +243,6 @@ chmod 755 /usr/bin/systemctl /usr/bin/journalctl
 id -u s_w >/dev/null 2>&1 || useradd --home /home/s_w --create-home --shell /usr/sbin/nologin s_w
 export SCHELA_SYSTEMD_DIR=/tmp/schela-systemd
 export SCHELA_STATE=/tmp/schela-workers-state.json
-# A full apply also writes the cron files; minimal images (Debian 13) ship without cron.
-mkdir -p /etc/cron.d
 rm -rf "$SCHELA_SYSTEMD_DIR"; mkdir -p "$SCHELA_SYSTEMD_DIR/multi-user.target.wants"
 
 write_state() {
@@ -252,10 +250,11 @@ write_state() {
 import json, sys
 workers = json.loads(sys.argv[1])
 sites = json.loads(sys.argv[2]) if len(sys.argv) > 2 else []
+apps = json.loads(sys.argv[3]) if len(sys.argv) > 3 else []
 json.dump({
   "settings": {"hostname": "panel.test"},
   "modules": {"php": True, "node": False, "firewall": False, "mail": False, "dns": False, "ssl": False, "redis": False, "backups": False},
-  "sites": sites, "apps": [], "firewall": [], "mailboxes": [], "cron": [], "backups": [], "dns": {"zones": []},
+  "sites": sites, "apps": apps, "firewall": [], "mailboxes": [], "cron": [], "backups": [], "dns": {"zones": []},
   "workers": workers,
 }, open("/tmp/schela-workers-state.json", "w"))
 PY
@@ -455,6 +454,46 @@ pass "helper rejects bad ids, unknown ops, stopped workers and extra fields"
 out="$(printf '%s' '{"op":"logs","id":7}' | SUDO_USER=schela SCHELA_STATE=/tmp/schela-workers-state.json python3 "$INS/schela-workers" || true)"
 echo "$out" | grep -q 'Panel state is not readable' || fail "helper honoured SCHELA_STATE under sudo"
 pass "helper ignores SCHELA_STATE when run through sudo"
+
+echo "== cron directory"
+export SCHELA_STATE=/tmp/schela-workers-state.json
+# Minimal images (Debian 13) ship without cron, so /etc/cron.d may not exist.
+rm -rf /etc/cron.d
+write_state '[]'
+apply_now
+[ -f /etc/cron.d/schela-jobs ] && [ -f /etc/cron.d/schela-backups ] || fail "cron files not written without /etc/cron.d"
+[ "$(stat -c %a /etc/cron.d)" = "755" ] || fail "/etc/cron.d created with the wrong mode"
+if ! command -v cron >/dev/null 2>&1; then
+  grep -q 'cron is not installed' /tmp/schela-apply.out || fail "missing cron daemon not reported"
+fi
+pass "apply works without /etc/cron.d and says when cron is missing"
+
+echo "== node app units"
+app() { printf '{"name":"%s","domain":"%s","nodeVersion":"22","port":%s,"entry":"index.js","status":"running","ip":""}' "$1" "$2" "$3"; }
+rm -f "$SCHELA_SYSTEMD_DIR"/schela-app-*.service
+printf '[Unit]\n' >"$SCHELA_SYSTEMD_DIR/schela-app@.service"
+printf '[Unit]\n' >"$SCHELA_SYSTEMD_DIR/unrelated.service"
+write_state '[]' '[]' "[$(app api api.test 3001),$(app web web.test 3002)]"
+apply_now
+[ -f "$SCHELA_SYSTEMD_DIR/schela-app-api.service" ] && [ -f "$SCHELA_SYSTEMD_DIR/schela-app-web.service" ] \
+  || fail "app units not written"
+grep -qx 'enable --now schela-app-api' /tmp/systemctl.log || fail "app not started"
+# web is deleted; api stays. A broken entry for a third app keeps its old unit.
+printf '[Unit]\n' >"$SCHELA_SYSTEMD_DIR/schela-app-broken.service"
+write_state '[]' '[]' "[$(app api api.test 3001),$(app broken broken.test 99999)]"
+apply_now
+[ ! -e "$SCHELA_SYSTEMD_DIR/schela-app-web.service" ] || fail "deleted app kept its unit"
+grep -qx 'disable --now schela-app-web' /tmp/systemctl.log || fail "deleted app was not stopped"
+grep -qx 'daemon-reload' /tmp/systemctl.log || fail "no daemon-reload after removing a unit"
+[ -f "$SCHELA_SYSTEMD_DIR/schela-app-api.service" ] || fail "kept app lost its unit"
+! grep -q 'disable --now schela-app-api' /tmp/systemctl.log || fail "kept app was stopped"
+[ -f "$SCHELA_SYSTEMD_DIR/schela-app-broken.service" ] || fail "unit of an app still in the panel was removed"
+[ -f "$SCHELA_SYSTEMD_DIR/schela-app@.service" ] && [ -f "$SCHELA_SYSTEMD_DIR/unrelated.service" ] \
+  || fail "removed a unit that is not a deleted app's"
+apply_now
+! grep -q '^disable --now schela-app' /tmp/systemctl.log || { cat /tmp/systemctl.log; fail "second apply stopped an app"; }
+pass "units of deleted Node apps are stopped and removed, others are left alone"
+rm -f "$SCHELA_SYSTEMD_DIR"/schela-app*.service "$SCHELA_SYSTEMD_DIR/unrelated.service"
 
 for bin in systemctl journalctl; do
   rm -f "/usr/bin/$bin"
