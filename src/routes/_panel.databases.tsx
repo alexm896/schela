@@ -109,7 +109,7 @@ function DatabasesPage() {
   const anyEnabled = enabledEngines(overview.engines).length > 0;
 
   async function finish(issued: IssuedCredentials | null, message: string) {
-    await router.invalidate();
+    await router.invalidate({ sync: true });
     if (issued) setOpen({ kind: "credentials", issued });
     else {
       setOpen(null);
