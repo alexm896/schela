@@ -16,7 +16,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import type { MailListItem } from "@/lib/webmail/imap";
+import type { MailListItem } from "@/features/webmail/imap";
 import {
   webmailDelete,
   webmailFolders,
@@ -25,7 +25,7 @@ import {
   webmailRead,
   webmailSend,
   webmailWhoami,
-} from "@/lib/webmail/server";
+} from "@/features/webmail/api";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/webmail/inbox")({

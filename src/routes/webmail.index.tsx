@@ -5,7 +5,7 @@ import { SchelaMark } from "@/components/layout/schela-mark";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { webmailLogin, webmailWhoami } from "@/lib/webmail/server";
+import { webmailLogin, webmailWhoami } from "@/features/webmail/api";
 
 export const Route = createFileRoute("/webmail/")({
   validateSearch: (raw: Record<string, unknown>): { address?: string } => {
