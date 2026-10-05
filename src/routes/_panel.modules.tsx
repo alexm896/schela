@@ -32,8 +32,9 @@ function ModulesPage() {
       toast.error(err instanceof Error ? err.message : "Failed");
     } finally {
       // The row is saved before schela-apply runs, so reload even when the
-      // apply failed; otherwise the page keeps showing the old state.
-      await router.invalidate();
+      // apply failed; otherwise the page keeps showing the old state. `sync`
+      // waits for the loaders, so the switch does not flick back meanwhile.
+      await router.invalidate({ sync: true });
       setPending((prev) => {
         const next = { ...prev };
         delete next[id];
