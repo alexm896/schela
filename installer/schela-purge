@@ -125,11 +125,13 @@ def op_account(state: dict[str, Any], req: dict[str, Any]) -> dict[str, Any]:
         # 12: the home could not be removed; it is removed below either way.
         if done.returncode not in (0, 12):
             raise PurgeError(done.stderr.strip() or f"userdel exited {done.returncode}")
-    removed_home = remove_tree(f"/home/{user}", "/home")
+    # userdel normally took the home already; this covers an account that was
+    # gone while its home was not.
+    remove_tree(f"/home/{user}", "/home")
     env_file = os.path.join(APP_ENV_DIR, f"{user}.env")
     if os.path.isfile(env_file):
         os.unlink(env_file)
-    return {"ok": True, "user": user, "account": pw is not None, "home": removed_home}
+    return {"ok": True, "user": user}
 
 
 def op_maildir(state: dict[str, Any], req: dict[str, Any]) -> dict[str, Any]:
