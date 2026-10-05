@@ -10,7 +10,7 @@ import {
   LinkDatabaseDialog,
   NewDatabaseDialog,
 } from "@/components/database-dialogs";
-import { PageHeader } from "@/components/page-header";
+import { PageHeader } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {

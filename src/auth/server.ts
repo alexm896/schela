@@ -8,14 +8,14 @@
  * first-run form.
  *
  * NEVER import this from client code: it pulls in `pg` and server-only Better
- * Auth internals. The client uses `@/lib/auth/client`; server functions get a
- * verified id via `@/lib/auth/middleware`.
+ * Auth internals. The client uses `@/auth/client`; server functions get a
+ * verified id via `@/auth/middleware`.
  */
 import { betterAuth } from "better-auth";
 import { tanstackStartCookies } from "better-auth/tanstack-start";
 import { randomBytes } from "node:crypto";
 import { Pool } from "pg";
-import { ensureDbReady, getPglite } from "../db";
+import { ensureDbReady, getPglite } from "@/server/db";
 import { userCount } from "./admin.server";
 import { pgliteDialect } from "./pglite-dialect";
 

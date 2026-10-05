@@ -1,16 +1,17 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
-import { authMiddleware } from "@/lib/auth/middleware";
-import { getSql, type Sql } from "@/lib/db";
+import { authMiddleware } from "@/auth/middleware";
+import { getSql, type Sql } from "@/server/db";
+import { logActivity, mapActivity } from "@/server/activity";
 import { normalizeDomain, systemUserFromDomain } from "@/lib/utils";
-import { applyAfterChange, isVpsApply, publicIp, readHostMetrics } from "./apply";
-import { bootstrapAdminIfNeeded, createFirstAdmin as createFirstAdminUser, hasAdminUser } from "./bootstrap-admin";
-import { displayUsername, toAuthEmail } from "./admin-id";
+import { applyAfterChange, readHostMetrics } from "@/server/apply";
+import { dnsRecordIp, isVpsApply } from "@/server/env";
+import { bootstrapAdminIfNeeded, createFirstAdmin as createFirstAdminUser, hasAdminUser } from "@/auth/bootstrap-admin";
+import { displayUsername, toAuthEmail } from "@/auth/admin-id";
 import { checkMailDnsLive } from "./dns-check";
 import { describeMailDns, ensureHostDns, ensureMailDns, mailboxDomain, mailDnsBlueprint } from "./dns-auto";
 import { hashMailboxPassword } from "./mail-pass";
 import {
-  mapActivity,
   mapApp,
   mapMailbox,
   mapModule,
@@ -110,10 +111,6 @@ const MODULES = [
     sort: 10,
   },
 ] as const;
-
-async function logActivity(sql: Sql, kind: string, message: string) {
-  await sql`insert into activity (kind, message) values (${kind}, ${message})`;
-}
 
 async function liveMetrics(): Promise<LiveMetrics> {
   const real = await readHostMetrics();
@@ -233,7 +230,7 @@ export const createFirstAdmin = createServerFn({ method: "POST" })
   });
 
 export const sessionUser = createServerFn({ method: "GET" }).handler(async () => {
-  const { getSessionUser } = await import("@/lib/auth/verify.server");
+  const { getSessionUser } = await import("@/auth/verify.server");
   const user = await getSessionUser();
   return user ? { id: user.id, email: user.email } : null;
 });
@@ -784,7 +781,7 @@ export const createDnsZone = createServerFn({ method: "POST" })
       returning *
     `;
     const zone = mapZone(rows[0]);
-    const ip = isVpsApply() ? publicIp() : "203.0.113.10";
+    const ip = dnsRecordIp();
     const ns = isVpsApply() ? `ns1.${name}` : "ns1.schela.local";
     await sql`
       insert into dns_records (zone_id, type, name, value, ttl, priority)
@@ -936,7 +933,7 @@ export const checkMailDns = createServerFn({ method: "POST" })
   .validator(z.object({ domain: z.string().min(3).max(120) }))
   .handler(async ({ data }) => {
     const domain = data.domain.trim().toLowerCase();
-    const ip = isVpsApply() ? publicIp() : "203.0.113.10";
+    const ip = dnsRecordIp();
     const expected = mailDnsBlueprint(domain, ip).map((r) => ({
       type: r.type,
       name: r.name,

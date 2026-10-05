@@ -10,7 +10,7 @@ import { createMiddleware } from "@tanstack/react-start";
  *
  * Throws `UnauthorizedError` unless the caller holds the admin's session (see
  * `verify.server.ts`). Every panel server function must use it, except the few
- * public ones listed in `src/lib/server-fn-auth.test.ts`.
+ * public ones listed in `src/auth/server-fn-auth.test.ts`.
  */
 export const authMiddleware = createMiddleware({ type: "function" }).server(async ({ next }) => {
   // ONLY import `*.server` modules here, so Vite does not ship

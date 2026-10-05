@@ -1,17 +1,14 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
-import { authMiddleware } from "@/lib/auth/middleware";
-import { getSql, type Sql } from "@/lib/db";
+import { authMiddleware } from "@/auth/middleware";
+import { getSql, type Sql } from "@/server/db";
+import { logActivity } from "@/server/activity";
 import { appSystemUser } from "@/lib/utils";
-import { applyAfterChange } from "./apply";
+import { applyAfterChange } from "@/server/apply";
 import { ensureHostDns } from "./dns-auto";
 import { mapApp, mapCron, mapIp, mapSite } from "./map";
 import { assertCronCommand, assertCronSchedule, normalizeIp } from "./net";
 import type { CronJob, IpAddress } from "./types";
-
-async function logActivity(sql: Sql, kind: string, message: string) {
-  await sql`insert into activity (kind, message) values (${kind}, ${message})`;
-}
 
 async function listIpRows(sql: Sql): Promise<IpAddress[]> {
   const rows = await sql<Record<string, unknown>>`

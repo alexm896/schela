@@ -1,8 +1,10 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
-import { authMiddleware } from "@/lib/auth/middleware";
-import { getSql, type Sql } from "@/lib/db";
-import { applyAfterChange, isVpsApply } from "./apply";
+import { authMiddleware } from "@/auth/middleware";
+import { getSql, type Sql } from "@/server/db";
+import { logActivity } from "@/server/activity";
+import { applyAfterChange } from "@/server/apply";
+import { isVpsApply } from "@/server/env";
 import {
   DATABASE_ENGINES,
   DATABASE_ENGINE_KEYS,
@@ -14,7 +16,7 @@ import {
 } from "./databases";
 import { databasePasswordHash, generateDatabasePassword } from "./db-pass";
 import { mapDatabase, mapDatabaseUser } from "./map";
-import { runSudoHelper } from "./sudo-helper";
+import { runSudoHelper } from "@/server/sudo-helper";
 import type { DatabaseUser, ManagedDatabase } from "./types";
 
 const HELPER = "/usr/local/sbin/schela-db";
@@ -43,10 +45,6 @@ export type IssuedCredentials = {
 };
 
 type EngineInfo = { sizes?: unknown };
-
-async function logActivity(sql: Sql, kind: string, message: string) {
-  await sql`insert into activity (kind, message) values (${kind}, ${message})`;
-}
 
 async function runHelper(req: Record<string, unknown>): Promise<Record<string, unknown>> {
   return runSudoHelper(HELPER, req, { label: "Database command", timeoutMs: 60_000 });
