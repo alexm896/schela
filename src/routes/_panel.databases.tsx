@@ -2,14 +2,6 @@ import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import { Database, KeyRound, MoreHorizontal, Plus, UserPlus } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { toast } from "sonner";
-import {
-  CredentialsDialog,
-  DatabaseUserDialog,
-  DeleteDatabaseDialog,
-  DeleteDatabaseUserDialog,
-  LinkDatabaseDialog,
-  NewDatabaseDialog,
-} from "@/features/databases/components/database-dialogs";
 import { PageHeader } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -26,6 +18,14 @@ import {
   type DatabaseWithSize,
   type IssuedCredentials,
 } from "@/features/databases/api";
+import {
+  CredentialsDialog,
+  DatabaseUserDialog,
+  DeleteDatabaseDialog,
+  DeleteDatabaseUserDialog,
+  LinkDatabaseDialog,
+  NewDatabaseDialog,
+} from "@/features/databases/components/database-dialogs";
 import {
   ACCESS_LEVELS,
   DATABASE_ENGINES,

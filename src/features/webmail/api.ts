@@ -1,13 +1,13 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
+import { verifyMailboxPassword } from "@/features/mail/password";
 import { getSql } from "@/server/db";
 import { isVpsApply } from "@/server/env";
-import { verifyMailboxPassword } from "@/features/mail/password";
 import { demoStore } from "./demo";
 import { withImap, type MailBody, type MailListItem } from "./imap";
-import { sanitizeHtml, textToHtml } from "./sanitize";
 import { parseAddressList } from "./rfc822";
 import { assertImapFolder, assertMailAddress } from "./safe.ts";
+import { sanitizeHtml, textToHtml } from "./sanitize";
 import {
   clearWebmailSession,
   readWebmailSession,

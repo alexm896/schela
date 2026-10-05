@@ -1,7 +1,7 @@
-import { logActivity } from "@/server/activity";
-import type { Sql } from "@/server/db";
 import { seedBaseFirewall } from "@/features/firewall/defaults";
 import { seedModules, syncModuleCatalog } from "@/features/modules/modules";
+import { logActivity } from "@/server/activity";
+import type { Sql } from "@/server/db";
 import type { PanelSettings } from "./types";
 
 export async function readSettings(sql: Sql): Promise<PanelSettings> {

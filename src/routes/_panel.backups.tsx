@@ -24,8 +24,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { BACKUP_SCOPES, destinationSummary } from "@/features/backups/backups";
-import type { BackupJob } from "@/features/backups/types";
 import {
   createBackupJob,
   deleteBackupJob,
@@ -34,6 +32,8 @@ import {
   toggleBackupJob,
   updateBackupJob,
 } from "@/features/backups/api";
+import { BACKUP_SCOPES, destinationSummary } from "@/features/backups/backups";
+import type { BackupJob } from "@/features/backups/types";
 import { CRON_PRESETS } from "@/features/cron/cron";
 import { formatSize } from "@/features/files/files";
 

@@ -1,12 +1,12 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
-import { authMiddleware } from "@/auth/middleware";
 import { bootstrapAdminIfNeeded } from "@/auth/bootstrap-admin";
+import { authMiddleware } from "@/auth/middleware";
+import { seedBaseFirewall } from "@/features/firewall/defaults";
+import { readModules, seedModules } from "@/features/modules/modules";
 import { logActivity } from "@/server/activity";
 import { applyAfterChange } from "@/server/apply";
 import { getSql } from "@/server/db";
-import { seedBaseFirewall } from "@/features/firewall/defaults";
-import { readModules, seedModules } from "@/features/modules/modules";
 import { ensureSetup, readSettings } from "./settings";
 import type { PanelState } from "./types";
 

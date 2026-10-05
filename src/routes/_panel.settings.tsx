@@ -1,15 +1,15 @@
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { useState } from "react";
 import { toast } from "sonner";
+import { getAdminIdentity, updateAdminIdentity } from "@/auth/api";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { getAdminIdentity, updateAdminIdentity } from "@/auth/api";
-import { getPanelState, updateSettings } from "@/features/settings/api";
 import { NODE_VERSIONS } from "@/features/apps/apps";
+import { getPanelState, updateSettings } from "@/features/settings/api";
 import { PHP_VERSIONS } from "@/features/sites/sites";
 
 export const Route = createFileRoute("/_panel/settings")({
