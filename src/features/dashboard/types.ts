@@ -1,5 +1,6 @@
 import type { Activity } from "@/server/activity";
-import type { NodeApp, Site } from "@/lib/panel/types";
+import type { NodeApp } from "@/features/apps/types";
+import type { Site } from "@/features/sites/types";
 import type { ModuleRow } from "@/features/modules/types";
 import type { PanelSettings } from "@/features/settings/types";
 

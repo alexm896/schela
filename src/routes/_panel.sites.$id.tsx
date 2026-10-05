@@ -18,9 +18,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { deleteSite, getSite, retrySiteTls, updateSite } from "@/lib/panel/server";
-import { PHP_VERSIONS } from "@/lib/panel/types";
-import { normalizeWebRoot, webRootFromRoot } from "@/lib/panel/site-root";
+import { deleteSite, getSite, retrySiteTls, updateSite } from "@/features/sites/api";
+import { PHP_VERSIONS } from "@/features/sites/sites";
+import { normalizeWebRoot, webRootFromRoot } from "@/features/sites/site-root";
 
 export const Route = createFileRoute("/_panel/sites/$id")({
   loader: async ({ params }) => {

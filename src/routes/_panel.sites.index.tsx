@@ -24,9 +24,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { createSite, listSites } from "@/lib/panel/server";
-import { PHP_VERSIONS } from "@/lib/panel/types";
-import { systemUserFromDomain } from "@/lib/utils";
+import { createSite, listSites } from "@/features/sites/api";
+import { PHP_VERSIONS, systemUserFromDomain } from "@/features/sites/sites";
 
 export const Route = createFileRoute("/_panel/sites/")({
   loader: () => listSites(),
