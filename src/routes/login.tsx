@@ -7,7 +7,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { authClient } from "@/auth/client";
 import { loginEmails } from "@/auth/admin-id";
-import { adminStatus, createFirstAdmin, getLoginInfo } from "@/lib/panel/server";
+import { adminStatus, createFirstAdmin } from "@/auth/api";
+import { getLoginInfo } from "@/lib/panel/server";
 
 export const Route = createFileRoute("/login")({
   loader: async () => {

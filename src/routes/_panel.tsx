@@ -2,7 +2,8 @@ import { createFileRoute, redirect } from "@tanstack/react-router";
 import { RedirectToSignIn } from "@/auth/gates";
 import { useCurrentUserState } from "@/auth/use-current-user";
 import { Shell } from "@/components/layout/shell";
-import { getPanelState, sessionUser } from "@/lib/panel/server";
+import { sessionUser } from "@/auth/api";
+import { getPanelState } from "@/lib/panel/server";
 
 export const Route = createFileRoute("/_panel")({
   loader: async () => {
