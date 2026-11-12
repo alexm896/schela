@@ -5,7 +5,8 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/.." && pwd)"
-VERSION="$(cat "$HERE/VERSION" 2>/dev/null || echo 0.1.0)"
+# Not VERSION: sourcing /etc/os-release below would overwrite it.
+SCHELA_VERSION="$(cat "$HERE/VERSION" 2>/dev/null || echo 0.1.0)"
 CATALOG="$HERE/versions.json"
 # shellcheck source=installer/lib.sh
 . "$HERE/lib.sh"
@@ -107,7 +108,7 @@ HOSTNAME_FQDN="${SCHELA_HOSTNAME:-$(hostname -f 2>/dev/null || hostname)}"
 MODULES_CSV="${SCHELA_MODULES:-php,node,firewall,ssl,mail,dns}"
 PANEL_PORT="${SCHELA_PANEL_PORT:-9090}"
 
-log "Schela ${VERSION} on ${PRETTY_NAME}"
+log "Schela ${SCHELA_VERSION} on ${PRETTY_NAME}"
 log "Hostname ${HOSTNAME_FQDN}"
 
 apt-get update -y

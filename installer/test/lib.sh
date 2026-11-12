@@ -44,3 +44,14 @@ pass "PHP repository source is deb822 and pinned to the sury keyring"
 [[ "$N_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && [[ "$N_SHA256" =~ ^[0-9a-f]{64}$ ]] || fail "n pin"
 ! grep -q 'tj/n/master' "$INS/install.sh" || fail "install.sh still downloads n from master"
 pass "n is pinned to ${N_VERSION} with a sha256"
+
+# install.sh up to its first apt-get, with apt-get stubbed to stop it there.
+mkdir -p /tmp/schela-stub
+printf '#!/bin/sh\nexit 42\n' >/tmp/schela-stub/apt-get
+chmod 755 /tmp/schela-stub/apt-get
+out="$(PATH="/tmp/schela-stub:$PATH" SCHELA_INNER=1 SCHELA_PROGRESS=/tmp/schela-progress \
+  SCHELA_HOSTNAME=banner.schela-ci.dev bash "$INS/install.sh" 2>&1 || true)"
+rm -rf /tmp/schela-stub /tmp/schela-progress
+want="==> Schela $(cat "$INS/VERSION") on "
+grep -qF "$want" <<<"$out" || fail "install.sh banner: expected '$want', got: $(grep -m1 '==> Schela' <<<"$out")"
+pass "install.sh reports the Schela version, not the OS version"
