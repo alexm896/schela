@@ -8,5 +8,19 @@
     "supported": ["22", "24", "26"],
     "retired": ["18", "20"],
     "default": "26"
+  },
+  "meilisearch": {
+    "version": "1.56.2",
+    "sha256": {
+      "amd64": "fa2e1043139998df2056ce136d10bc35e0c252051052667ca3146bac2eb0288b",
+      "arm64": "f379be855adaa102c7518228b5e1a33fb862f0f20acddc45720e74f0f54015a7"
+    }
+  },
+  "typesense": {
+    "version": "30.2",
+    "sha256": {
+      "amd64": "cd791605e7c6cc7be457794f534cd4b9f9d361781adb10e40020efc22840ebc3",
+      "arm64": "a9b9d6e2927c863900306290e8532c17f66bdff34ef2ad043b24ed4ccec8a6bc"
+    }
   }
 }

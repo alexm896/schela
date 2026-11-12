@@ -334,6 +334,28 @@ if bash "$INS/schela-apply" >/tmp/schela-apply.out 2>&1; then fail "apply hid a 
 grep -q 'reload nginx' /tmp/systemctl.log || fail "a failed database sync held back nginx"
 pass "a failed database sync fails the apply after nginx is reloaded"
 
+echo "== schela-apply: one at a time"
+# A database sync that takes a while, logging when it starts and ends.
+cat >/tmp/slow-db <<'SH'
+#!/bin/bash
+echo "start $PPID" >>/tmp/apply-order.log
+sleep 2
+echo "end $PPID" >>/tmp/apply-order.log
+SH
+chmod 755 /tmp/slow-db
+export SCHELA_DB=/tmp/slow-db
+: >/tmp/apply-order.log
+bash "$INS/schela-apply" >/tmp/apply-a.out 2>&1 &
+first=$!
+sleep 0.3
+bash "$INS/schela-apply" >/tmp/apply-b.out 2>&1 &
+second=$!
+wait "$first" || { cat /tmp/apply-a.out; fail "first concurrent apply failed"; }
+wait "$second" || { cat /tmp/apply-b.out; fail "second concurrent apply failed"; }
+order="$(awk '{print $1}' /tmp/apply-order.log | tr '\n' ' ')"
+[ "$order" = "start end start end " ] || fail "two applies ran at the same time: $order"
+pass "a second apply waits for the first to finish"
+
 rm -f /usr/bin/systemctl
 mv /usr/bin/systemctl.real /usr/bin/systemctl 2>/dev/null || true
 echo "databases: all checks passed"

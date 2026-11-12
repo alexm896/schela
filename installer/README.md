@@ -23,6 +23,7 @@ The panel writes `/var/lib/schela/state.json` and runs `sudo schela apply`:
 - **Sites** — system user, home jail, dedicated PHP-FPM pool, nginx vhost, optional Let’s Encrypt
 - **Node apps** — unprivileged systemd unit + reverse proxy
 - **Firewall** — UFW, default deny (22/80/443 always stay open)
+- **Search**: Meilisearch and Typesense from releases pinned in `versions.json` (sha256 checked), each as its own user on 127.0.0.1 in a sandboxed systemd unit; per-site API keys through `schela-search`
 - **Mail** — Postfix virtual mailboxes
 - **DNS** — Bind master zones
 
@@ -44,7 +45,9 @@ sudo schela status
 | `/opt/schela` | panel code |
 | `/var/lib/schela` | database + state |
 | `/usr/local/sbin/schela-apply` | apply engine |
-| `/usr/local/share/schela/versions.json` | PHP and Node versions (from `installer/versions.json`) |
+| `/usr/local/share/schela/versions.json` | PHP and Node versions, pinned Meilisearch and Typesense releases (from `installer/versions.json`) |
+| `/var/lib/schela/search` | Meilisearch and Typesense master keys (root only) |
+| `/var/lib/meilisearch`, `/var/lib/typesense` | search engine data |
 | `/home/<site-user>/www` | site files |
 
 Sites never run as root. Each site is its own Unix user.
@@ -53,6 +56,12 @@ Sites never run as root. Each site is its own Unix user.
 
 `installer/versions.json` is the single list the installer, `schela-apply`, `schela doctor` and the panel read. `supported` versions are installed on new servers and offered for new sites and apps; `retired` ones are no longer installed or offered, but existing sites and apps keep running on them. The panel only offers supported versions that are installed on the box.
 
+## Meilisearch and Typesense
+
+Off by default. Turning a module on installs the release pinned in `versions.json` after checking its sha256, runs it as its own user on 127.0.0.1 only, and keeps its master key in `/var/lib/schela/search` (root only). The panel never sees a master key: it asks `schela-search` for keys limited to one site or app, whose index names must start with `site<id>_` or `app<id>_`. Keys are shown once.
+
+To move to a new release, change its version and both checksums in `versions.json` and apply. The data is copied to `pre-upgrade-<old version>` next to it before the new binary starts; a pinned version older than the installed one is never applied. Turning a module off stops the service; the binary, data and keys stay.
+
 ## Tests
 
 ```bash
@@ -60,7 +69,7 @@ installer/test/docker.sh                # every supported system
 installer/test/docker.sh ubuntu:26.04   # one system
 ```
 
-`SCHELA_TEST_NETWORK=0` skips `packages.sh`, which installs every PHP and Node version from the real repositories.
+`SCHELA_TEST_NETWORK=0` skips `packages.sh`, which installs every PHP and Node version from the real repositories, and `search.sh`, which installs, upgrades and checks the keys of the real Meilisearch and Typesense (downloads are kept in `.cache/`).
 
 ## Notes
 

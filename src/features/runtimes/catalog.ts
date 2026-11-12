@@ -2,6 +2,6 @@
 import versions from "../../../installer/versions.json" with { type: "json" };
 import type { Runtime, RuntimeCatalog } from "./runtimes";
 
-export const RUNTIME_CATALOG: Record<Runtime, RuntimeCatalog> = versions;
+export const RUNTIME_CATALOG: Record<Runtime, RuntimeCatalog> = { php: versions.php, node: versions.node };
 export const PHP_CATALOG = RUNTIME_CATALOG.php;
 export const NODE_CATALOG = RUNTIME_CATALOG.node;

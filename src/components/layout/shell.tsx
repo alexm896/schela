@@ -13,6 +13,7 @@ import {
   Menu,
   Network,
   Puzzle,
+  Search,
   Server,
   Settings,
   Shield,
@@ -48,6 +49,7 @@ const NAV: { title: string; items: NavItem[] }[] = [
       { to: "/webmail", label: "Webmail", icon: Inbox, modules: ["mail"] },
       { to: "/cron", label: "Cron jobs", icon: Clock },
       { to: "/redis", label: "Redis", icon: DatabaseZap, modules: ["redis"] },
+      { to: "/search", label: "Search", icon: Search, modules: ["meilisearch", "typesense"] },
     ],
   },
   {

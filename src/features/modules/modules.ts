@@ -1,6 +1,7 @@
 import type { Sql } from "@/server/db";
 import { NODE_CATALOG, PHP_CATALOG } from "@/features/runtimes/catalog";
 import { versionsLabel } from "@/features/runtimes/runtimes";
+import { SEARCH_CATALOG } from "@/features/search/catalog";
 import { mapModule } from "./map";
 import type { ModuleRow } from "./types";
 
@@ -87,6 +88,22 @@ export const MODULES = [
     version: "1.0",
     core: false,
     sort: 10,
+  },
+  {
+    slug: "meilisearch",
+    name: "Meilisearch",
+    description: "Search engine on 127.0.0.1, with keys limited to each site's own indexes. Off by default. Disable stops it; data and keys stay.",
+    version: SEARCH_CATALOG.meilisearch.version,
+    core: false,
+    sort: 11,
+  },
+  {
+    slug: "typesense",
+    name: "Typesense",
+    description: "Search engine on 127.0.0.1 that keeps its indexes in RAM, with keys limited to each site's own collections. Off by default. Disable stops it; data and keys stay.",
+    version: SEARCH_CATALOG.typesense.version,
+    core: false,
+    sort: 12,
   },
 ] as const;
 

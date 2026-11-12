@@ -1,0 +1,404 @@
+#!/usr/bin/env python3
+"""API keys and status of the local Meilisearch and Typesense for the Schela panel.
+
+JSON on stdin, JSON on stdout. The panel runs it through sudo with no arguments:
+
+  {"op": "info"}
+      Each engine: module switch, binary, service, health, version, memory,
+      disk, index count and the ids of the keys Schela made.
+  {"op": "create-key", "engine": "meilisearch", "owner": "site", "id": 3, "access": "admin"}
+      A key limited to the indexes (Meilisearch) or collections (Typesense)
+      whose name starts with the owner's prefix, here "site3_". "admin" may
+      create, fill, configure and delete those; "search" may only search them.
+      The key is in the answer once; Schela never stores it.
+  {"op": "delete-key", "engine": "typesense", "keyId": "12"}
+      Revokes a key Schela made. Keys made by hand are refused.
+  {"op": "drop-indexes", "engine": "meilisearch", "owner": "app", "id": 5}
+      Deletes the indexes and keys of a site or app that is gone from the
+      panel state. A site or app still listed there is refused.
+
+The master keys stay in root-only files written by schela-apply and never
+leave this helper.
+"""
+from __future__ import annotations
+
+import json
+import os
+import re
+import subprocess
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+from typing import Any
+
+UNDER_SUDO = "SUDO_USER" in os.environ
+
+
+def setting(name: str, default: str) -> str:
+    # Under sudo the caller never chooses paths (sudo also resets env).
+    return default if UNDER_SUDO else os.environ.get(name, default)
+
+
+STATE = setting("SCHELA_STATE", "/var/lib/schela/state.json")
+SECRETS = setting("SCHELA_SEARCH_SECRETS", "/var/lib/schela/search")
+TIMEOUT = 10
+
+ENGINES: dict[str, dict[str, Any]] = {
+    "meilisearch": {
+        "url": "http://127.0.0.1:7700",
+        "unit": "meilisearch",
+        "bin": "/usr/local/bin/meilisearch",
+        "data": "/var/lib/meilisearch/data",
+        "actions": {
+            "admin": ["search", "documents.*", "indexes.*", "settings.*", "tasks.get", "stats.get"],
+            "search": ["search"],
+        },
+    },
+    "typesense": {
+        "url": "http://127.0.0.1:8108",
+        "unit": "typesense",
+        "bin": "/usr/local/bin/typesense-server",
+        "data": "/var/lib/typesense/data",
+        # Collection scope does not cover the server-wide resources (synonym
+        # sets, curation sets, stopwords, aliases, keys), so they are left out.
+        "actions": {
+            "admin": ["collections:*", "documents:*"],
+            "search": ["documents:search"],
+        },
+    },
+}
+OWNERS = ("site", "app")
+ACCESS = ("admin", "search")
+# Every key Schela makes is named "schela:<prefix>:<access>".
+TAG = "schela:"
+MEILI_UID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+TYPESENSE_ID_RE = re.compile(r"[0-9]{1,18}")
+
+
+class SearchError(Exception):
+    pass
+
+
+def fail(msg: str, code: int = 1) -> None:
+    sys.stdout.write(json.dumps({"ok": False, "error": msg}) + "\n")
+    raise SystemExit(code)
+
+
+def load_state() -> dict[str, Any]:
+    try:
+        with open(STATE, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError) as exc:
+        raise SearchError(f"cannot read panel state: {exc}") from exc
+    if not isinstance(data, dict):
+        raise SearchError("panel state is not an object")
+    return data
+
+
+def module_on(state: dict[str, Any], engine: str) -> bool:
+    mods = state.get("modules")
+    return isinstance(mods, dict) and mods.get(engine) is True
+
+
+def owner_ids(state: dict[str, Any], owner: str) -> set[int]:
+    items = state.get("sites" if owner == "site" else "apps")
+    ids: set[int] = set()
+    if isinstance(items, list):
+        for item in items:
+            if isinstance(item, dict) and type(item.get("id")) is int:
+                ids.add(item["id"])
+    return ids
+
+
+def prefix_of(owner: str, ident: int) -> str:
+    # "site3_" never starts "site30_": the digits end at the underscore.
+    return f"{owner}{ident}_"
+
+
+def master_key(engine: str) -> str:
+    try:
+        with open(os.path.join(SECRETS, f"{engine}.key"), encoding="utf-8") as fh:
+            key = fh.read().strip()
+    except OSError as exc:
+        raise SearchError(f"{engine} has no master key yet; turn its module on and apply") from exc
+    if not re.fullmatch(r"[0-9a-f]{64}", key):
+        raise SearchError(f"{engine} master key is malformed")
+    return key
+
+
+def call(engine: str, method: str, path: str, body: Any = None, auth: bool = True) -> tuple[int, Any]:
+    url = ENGINES[engine]["url"] + path
+    headers = {"Content-Type": "application/json"}
+    if auth:
+        key = master_key(engine)
+        if engine == "meilisearch":
+            headers["Authorization"] = f"Bearer {key}"
+        else:
+            headers["X-TYPESENSE-API-KEY"] = key
+    data = None if body is None else json.dumps(body).encode()
+    req = urllib.request.Request(url, data=data, method=method, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+            raw = resp.read()
+            status = resp.status
+    except urllib.error.HTTPError as exc:
+        raw = exc.read()
+        status = exc.code
+    except (urllib.error.URLError, OSError) as exc:
+        raise SearchError(f"{engine} is not reachable on {ENGINES[engine]['url']}: {exc}") from exc
+    try:
+        payload = json.loads(raw) if raw else None
+    except ValueError:
+        payload = None
+    return status, payload
+
+
+def expect(engine: str, status: int, payload: Any, ok: tuple[int, ...], what: str) -> Any:
+    if status in ok:
+        return payload
+    msg = payload.get("message") if isinstance(payload, dict) else None
+    raise SearchError(f"{engine}: {what} failed (HTTP {status}){': ' + str(msg) if msg else ''}")
+
+
+def systemctl(*args: str) -> str:
+    try:
+        out = subprocess.run(["systemctl", *args], capture_output=True, text=True, timeout=10, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    return out.stdout.strip()
+
+
+def dir_bytes(path: str) -> int | None:
+    if not os.path.isdir(path):
+        return None
+    total = 0
+    for root, _dirs, files in os.walk(path):
+        for name in files:
+            try:
+                total += os.lstat(os.path.join(root, name)).st_size
+            except OSError:
+                pass
+    return total
+
+
+def schela_keys(engine: str) -> list[dict[str, str]]:
+    """The keys Schela made: id, name tag and the first characters of the key."""
+    out: list[dict[str, str]] = []
+    if engine == "meilisearch":
+        offset = 0
+        while True:
+            status, payload = call(engine, "GET", f"/keys?limit=100&offset={offset}")
+            payload = expect(engine, status, payload, (200,), "listing keys")
+            results = payload.get("results") or []
+            for key in results:
+                name = str(key.get("name") or "")
+                if name.startswith(TAG):
+                    out.append({"id": str(key.get("uid")), "name": name})
+            offset += len(results)
+            if not results or offset >= int(payload.get("total") or 0):
+                break
+    else:
+        status, payload = call(engine, "GET", "/keys")
+        payload = expect(engine, status, payload, (200,), "listing keys")
+        for key in payload.get("keys") or []:
+            desc = str(key.get("description") or "")
+            if desc.startswith(TAG):
+                out.append({"id": str(key.get("id")), "name": desc})
+    return out
+
+
+def index_names(engine: str) -> list[str]:
+    names: list[str] = []
+    if engine == "meilisearch":
+        offset = 0
+        while True:
+            status, payload = call(engine, "GET", f"/indexes?limit=100&offset={offset}")
+            payload = expect(engine, status, payload, (200,), "listing indexes")
+            results = payload.get("results") or []
+            names.extend(str(i.get("uid")) for i in results)
+            offset += len(results)
+            if not results or offset >= int(payload.get("total") or 0):
+                break
+    else:
+        status, payload = call(engine, "GET", "/collections")
+        payload = expect(engine, status, payload, (200,), "listing collections")
+        names.extend(str(c.get("name")) for c in payload or [])
+    return names
+
+
+def engine_info(state: dict[str, Any], engine: str) -> dict[str, Any]:
+    spec = ENGINES[engine]
+    info: dict[str, Any] = {
+        "enabled": module_on(state, engine),
+        "installed": os.access(spec["bin"], os.X_OK),
+        "running": systemctl("is-active", spec["unit"]) == "active",
+        "enabledAtBoot": systemctl("is-enabled", spec["unit"]) == "enabled",
+        "healthy": False,
+        "version": "",
+        "memoryBytes": None,
+        "diskBytes": dir_bytes(spec["data"]),
+        "indexes": None,
+        "keys": None,
+        "error": "",
+    }
+    mem = systemctl("show", "-p", "MemoryCurrent", "--value", spec["unit"])
+    if mem.isdigit():
+        info["memoryBytes"] = int(mem)
+    try:
+        status, payload = call(engine, "GET", "/health", auth=False)
+        info["healthy"] = status == 200 and isinstance(payload, dict) and (
+            payload.get("status") == "available" or payload.get("ok") is True
+        )
+        if not info["healthy"]:
+            return info
+        if engine == "meilisearch":
+            status, payload = call(engine, "GET", "/version")
+            info["version"] = str(expect(engine, status, payload, (200,), "reading the version").get("pkgVersion", ""))
+        else:
+            status, payload = call(engine, "GET", "/debug")
+            info["version"] = str(expect(engine, status, payload, (200,), "reading the version").get("version", ""))
+        info["indexes"] = len(index_names(engine))
+        info["keys"] = [k["id"] for k in schela_keys(engine)]
+    except SearchError as exc:
+        info["error"] = str(exc)
+    return info
+
+
+def op_info(_req: dict[str, Any]) -> dict[str, Any]:
+    state = load_state()
+    return {"engines": {engine: engine_info(state, engine) for engine in ENGINES}}
+
+
+def checked_engine(req: dict[str, Any], state: dict[str, Any]) -> str:
+    engine = req.get("engine")
+    if engine not in ENGINES:
+        raise SearchError("unknown engine")
+    if not module_on(state, engine):
+        raise SearchError(f"the {engine} module is off")
+    return engine
+
+
+def checked_owner(req: dict[str, Any]) -> tuple[str, int]:
+    owner = req.get("owner")
+    ident = req.get("id")
+    if owner not in OWNERS or type(ident) is not int or not 0 < ident < 10**9:
+        raise SearchError("bad owner")
+    return owner, ident
+
+
+def op_create_key(req: dict[str, Any]) -> dict[str, Any]:
+    state = load_state()
+    engine = checked_engine(req, state)
+    owner, ident = checked_owner(req)
+    if ident not in owner_ids(state, owner):
+        raise SearchError(f"{owner} {ident} is not in the panel state")
+    access = req.get("access")
+    if access not in ACCESS:
+        raise SearchError("bad access level")
+    prefix = prefix_of(owner, ident)
+    tag = f"{TAG}{prefix}:{access}"
+    actions = ENGINES[engine]["actions"][access]
+    if engine == "meilisearch":
+        body = {
+            "name": tag,
+            "description": "Managed by Schela",
+            "actions": actions,
+            "indexes": [f"{prefix}*"],
+            "expiresAt": None,
+        }
+        status, payload = call(engine, "POST", "/keys", body)
+        payload = expect(engine, status, payload, (200, 201), "creating the key")
+        key_id, key = payload.get("uid"), payload.get("key")
+    else:
+        body = {"description": tag, "actions": actions, "collections": [f"{prefix}.*"]}
+        status, payload = call(engine, "POST", "/keys", body)
+        payload = expect(engine, status, payload, (200, 201), "creating the key")
+        key_id, key = payload.get("id"), payload.get("value")
+    # Typesense numbers its keys from 0.
+    if key_id is None or key_id == "" or not key:
+        raise SearchError(f"{engine} returned no key")
+    return {"keyId": str(key_id), "key": str(key), "prefix": prefix}
+
+
+def key_path(engine: str, key_id: Any) -> str:
+    pattern = MEILI_UID_RE if engine == "meilisearch" else TYPESENSE_ID_RE
+    if not isinstance(key_id, str) or not pattern.fullmatch(key_id):
+        raise SearchError("bad key id")
+    return f"/keys/{urllib.parse.quote(key_id)}"
+
+
+def delete_schela_key(engine: str, key_id: str) -> bool:
+    """Revokes one key Schela made. False when it was already gone."""
+    path = key_path(engine, key_id)
+    status, payload = call(engine, "GET", path)
+    if status == 404:
+        return False
+    payload = expect(engine, status, payload, (200,), "reading the key")
+    tag = payload.get("name") if engine == "meilisearch" else payload.get("description")
+    if not str(tag or "").startswith(TAG):
+        raise SearchError("that key was not made by Schela")
+    status, payload = call(engine, "DELETE", path)
+    expect(engine, status, payload, (200, 204, 404), "deleting the key")
+    return True
+
+
+def op_delete_key(req: dict[str, Any]) -> dict[str, Any]:
+    engine = req.get("engine")
+    if engine not in ENGINES:
+        raise SearchError("unknown engine")
+    return {"deleted": delete_schela_key(engine, req.get("keyId"))}
+
+
+def op_drop_indexes(req: dict[str, Any]) -> dict[str, Any]:
+    state = load_state()
+    engine = req.get("engine")
+    if engine not in ENGINES:
+        raise SearchError("unknown engine")
+    owner, ident = checked_owner(req)
+    if ident in owner_ids(state, owner):
+        raise SearchError(f"{owner} {ident} is still in the panel; delete it first")
+    prefix = prefix_of(owner, ident)
+    dropped: list[str] = []
+    for name in index_names(engine):
+        if not name.startswith(prefix):
+            continue
+        path = f"/indexes/{urllib.parse.quote(name)}" if engine == "meilisearch" else f"/collections/{urllib.parse.quote(name)}"
+        status, payload = call(engine, "DELETE", path)
+        expect(engine, status, payload, (200, 202, 204, 404), f"deleting {name}")
+        dropped.append(name)
+    revoked = 0
+    for key in schela_keys(engine):
+        if key["name"].startswith(f"{TAG}{prefix}:") and delete_schela_key(engine, key["id"]):
+            revoked += 1
+    return {"dropped": dropped, "revokedKeys": revoked}
+
+
+OPS = {
+    "info": op_info,
+    "create-key": op_create_key,
+    "delete-key": op_delete_key,
+    "drop-indexes": op_drop_indexes,
+}
+
+
+def main() -> None:
+    if os.geteuid() != 0:
+        fail("root required")
+    if len(sys.argv) > 1:
+        fail("takes no arguments; send JSON on stdin")
+    try:
+        req = json.loads(sys.stdin.read() or "{}")
+    except ValueError:
+        fail("request is not JSON")
+    if not isinstance(req, dict) or req.get("op") not in OPS:
+        fail("unknown op")
+    try:
+        result = OPS[req["op"]](req)
+    except SearchError as exc:
+        fail(str(exc))
+    sys.stdout.write(json.dumps({"ok": True, **result}) + "\n")
+
+
+if __name__ == "__main__":
+    main()

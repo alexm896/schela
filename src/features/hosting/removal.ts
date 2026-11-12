@@ -3,6 +3,7 @@ import { cronJobLabels, deleteCronJobs } from "@/features/cron/jobs";
 import { DATABASE_ENGINES } from "@/features/databases/databases";
 import { databasesOwnedBy, dropDatabase } from "@/features/databases/manage";
 import { hostDnsLabels, removeHostDns } from "@/features/dns/records";
+import { describeKey, dropOwnerIndexes, loadSearchKeys, ownerIndexLabels, revokeOwnerKeys } from "@/features/search/manage";
 import {
   assertConfirmed,
   chosen,
@@ -31,6 +32,10 @@ function owner(account: HostingAccount) {
   return account.kind === "site" ? { siteId: account.id } : { appId: account.id };
 }
 
+function searchOwner(account: HostingAccount) {
+  return { kind: account.kind, id: account.id };
+}
+
 export async function hostingRemovalPlan(
   sql: Sql,
   account: HostingAccount,
@@ -40,6 +45,7 @@ export async function hostingRemovalPlan(
   const cron = await cronJobLabels(sql, { kind: account.kind, id: account.id });
   const backups = await backupJobsOf(sql, { scope: account.kind, id: account.id });
   const databases = await databasesOwnedBy(sql, owner(account));
+  const searchKeys = await loadSearchKeys(sql, searchOwner(account));
   const home = `/home/${account.systemUser}`;
   return {
     confirm: account.name,
@@ -47,6 +53,7 @@ export async function hostingRemovalPlan(
       ...alsoRemoved,
       ...group("Cron jobs", cron),
       ...group("Backup jobs", backups.map((b) => b.name)),
+      ...group("Search keys (revoked)", searchKeys.map(describeKey)),
     ],
     options: [
       ...option("dns", "DNS records", await hostDnsLabels(sql, account.hostname), true),
@@ -56,6 +63,7 @@ export async function hostingRemovalPlan(
         databases.map((d) => `${d.name} (${DATABASE_ENGINES[d.engine].label})`),
         false,
       ),
+      ...option("search", "Search indexes", await ownerIndexLabels(sql, searchOwner(account)), false),
       ...option("archives", "Archives of its backup jobs", backups.map((b) => b.name), false),
       ...option("files", "Files and system user", [`${home} and the user ${account.systemUser}`], false),
     ],
@@ -81,6 +89,9 @@ export async function removeHostingAccount(
   if (picked.has("databases")) {
     for (const db of await databasesOwnedBy(sql, owner(account))) await dropDatabase(sql, db);
   }
+  // Keys are revoked before the row goes; one that cannot be (engine down) is
+  // reported. It reaches only this account's own indexes, and ids are never reused.
+  const warnings = await revokeOwnerKeys(sql, searchOwner(account));
   const jobs = await backupJobsOf(sql, { scope: account.kind, id: account.id });
   await deleteCronJobs(sql, { kind: account.kind, id: account.id });
   await deleteBackupJobs(sql, jobs.map((j) => j.id));
@@ -91,5 +102,7 @@ export async function removeHostingAccount(
   const purges: PurgeRequest[] = [];
   if (picked.has("files")) purges.push({ op: "account", user: account.systemUser });
   if (picked.has("archives")) purges.push(...jobs.map((j) => ({ op: "backups" as const, jobId: j.id })));
-  return purge(purges);
+  // After the apply: schela-search refuses an owner still in the state.
+  if (picked.has("search")) warnings.push(...(await dropOwnerIndexes(sql, searchOwner(account))));
+  return [...warnings, ...(await purge(purges))];
 }

@@ -126,6 +126,13 @@ ensure_home() {
 }
 
 [ "$(id -u)" -eq 0 ] || die "root required"
+# One apply at a time. The panel starts one per change, and two at once race
+# on users, unit files and configs. A later apply waits its turn, then applies
+# the newest state.
+if [ "$DRY" -eq 0 ]; then
+  exec 9>"${SCHELA_APPLY_LOCK:-/run/schela-apply.lock}"
+  flock 9
+fi
 need jq
 need nginx
 [ -f "$STATE" ] || die "no state at $STATE"
@@ -1011,6 +1018,313 @@ password_encryption = 'scram-sha-256'"; then
   db_sync postgresql
 }
 
+# --- search engines (Meilisearch, Typesense) ---------------------------------
+# One local instance of each, bound to 127.0.0.1 and run by its own system user
+# from the release pinned in versions.json, checked against its sha256. Sites
+# get API keys limited to their own indexes through schela-search; the master
+# key stays with root. Turning a module off stops the service; the binary, the
+# data and the keys stay.
+SEARCH_FAILED=0
+SEARCH_SECRETS="${SCHELA_SEARCH_SECRETS:-/var/lib/schela/search}"
+# Tests keep verified downloads here so each run does not fetch them again.
+DOWNLOAD_CACHE="${SCHELA_DOWNLOAD_CACHE:-}"
+SEARCH_MARK="# Managed by schela-apply."
+
+search_arch() {
+  case "$(uname -m)" in
+    x86_64 | amd64) echo amd64 ;;
+    aarch64 | arm64) echo arm64 ;;
+    *) return 1 ;;
+  esac
+}
+
+# fetch_verified URL SHA256 DEST: DEST is written only when the download matches.
+fetch_verified() {
+  local url="$1" sum="$2" dest="$3" part="$3.part"
+  [[ "$sum" =~ ^[0-9a-f]{64}$ ]] || { log "no valid sha256 for $url"; return 1; }
+  if [ -n "$DOWNLOAD_CACHE" ] && [ -f "$DOWNLOAD_CACHE/$sum" ]; then
+    cp "$DOWNLOAD_CACHE/$sum" "$part"
+  else
+    curl -fsSL --retry 3 -o "$part" "$url" || { rm -f "$part"; log "download failed: $url"; return 1; }
+  fi
+  if ! printf '%s  %s\n' "$sum" "$part" | sha256sum -c - >/dev/null 2>&1; then
+    rm -f "$part"
+    log "checksum mismatch, refusing $url"
+    return 1
+  fi
+  if [ -n "$DOWNLOAD_CACHE" ]; then
+    mkdir -p "$DOWNLOAD_CACHE"
+    cp "$part" "$DOWNLOAD_CACHE/$sum"
+  fi
+  mv -f "$part" "$dest"
+}
+
+# The root-only master key of an engine, made once.
+search_secret() {
+  local f="$SEARCH_SECRETS/$1.key" key
+  install -d -m 0700 -o root -g root "$SEARCH_SECRETS"
+  if [ ! -s "$f" ]; then
+    (umask 077 && openssl rand -hex 32 >"$f")
+  fi
+  chown root:root "$f"
+  chmod 600 "$f"
+  key="$(tr -d '\n' <"$f")"
+  [[ "$key" =~ ^[0-9a-f]{64}$ ]] || return 1
+  printf '%s' "$key"
+}
+
+search_version() {
+  local bin="$1"
+  [ -x "$bin" ] || return 0
+  # typesense-server prints "Typesense X" on stderr, then complains about the
+  # missing config and exits non-zero.
+  { "$bin" --version 2>&1 || true; } | awk '$1 == "meilisearch" || $1 == "Typesense" {print $2; exit}'
+}
+
+# version_newer A B: A is a later release than B.
+version_newer() {
+  [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -n1)" = "$1" ]
+}
+
+# Both engines rewrite their files when a new release first starts and cannot
+# go back, so the data is copied aside first, with the service stopped.
+search_keep_copy() {
+  local unit="$1" data="$2" old="$3" home need avail
+  home="$(dirname "$data")"
+  [ -d "$data" ] && [ -n "$(ls -A "$data" 2>/dev/null)" ] || return 0
+  need="$(du -sk "$data" | awk '{print $1}')"
+  avail="$(df -Pk "$home" | awk 'NR == 2 {print $4}')"
+  if [ "$avail" -le "$need" ]; then
+    log "$unit: not enough free disk to keep a copy of $data before upgrading"
+    return 1
+  fi
+  systemctl stop "$unit" >/dev/null 2>&1 || true
+  rm -rf "$home"/pre-upgrade-*
+  cp -a "$data" "$home/pre-upgrade-$old"
+  log "$unit: data from $old kept in $home/pre-upgrade-$old"
+}
+
+# search_install ENGINE BIN VERSION URL SHA256 UNIT DATA
+# Puts the pinned release at BIN. Returns 0 when BIN changed.
+search_install() {
+  local engine="$1" bin="$2" version="$3" url="$4" sum="$5" unit="$6" data="$7" installed tmp
+  installed="$(search_version "$bin")"
+  [ "$installed" = "$version" ] && return 1
+  if [ -n "$installed" ] && version_newer "$installed" "$version"; then
+    log "$engine: $installed is newer than the pinned $version; keeping it"
+    return 1
+  fi
+  log "$engine: installing $version${installed:+ (was $installed)}"
+  tmp="$(mktemp -d)"
+  if ! fetch_verified "$url" "$sum" "$tmp/download"; then
+    rm -rf "$tmp"
+    return 2
+  fi
+  case "$url" in
+    *.tar.gz)
+      if ! tar -xzf "$tmp/download" -C "$tmp" "$(basename "$bin")"; then
+        rm -rf "$tmp"
+        log "$engine: $(basename "$bin") not found in the release archive"
+        return 2
+      fi
+      ;;
+    *) mv "$tmp/download" "$tmp/$(basename "$bin")" ;;
+  esac
+  if [ -n "$installed" ] && ! search_keep_copy "$unit" "$data" "$installed"; then
+    rm -rf "$tmp"
+    return 2
+  fi
+  install -m 0755 -o root -g root "$tmp/$(basename "$bin")" "$bin.new"
+  mv -f "$bin.new" "$bin"
+  rm -rf "$tmp"
+  return 0
+}
+
+search_unit() {
+  # search_unit DESCRIPTION USER HOME EXEC [EXTRA SERVICE LINES]
+  cat <<UNIT
+${SEARCH_MARK}
+[Unit]
+Description=$1
+After=network.target
+
+[Service]
+Type=simple
+User=$2
+Group=$2
+ExecStart=$4
+Restart=on-failure
+RestartSec=5
+UMask=0077
+${5:-}
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=$3
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+}
+
+# write_owned DEST OWNER:GROUP MODE CONTENT -> 0 when the content changed.
+write_owned() {
+  local dest="$1" owner="$2" mode="$3" content="$4" changed=1
+  if [ ! -f "$dest" ] || [ "$(cat "$dest")" != "$content" ]; then
+    (umask 077 && printf '%s\n' "$content" >"$dest.tmp")
+    mv -f "$dest.tmp" "$dest"
+    changed=0
+  fi
+  chown "$owner" "$dest"
+  chmod "$mode" "$dest"
+  return "$changed"
+}
+
+# apply_search ENGINE
+apply_search() {
+  local engine="$1" user home data bin unit unitfile url arch version sum key cfg cfgfile exec extra
+  local restart=0 rc
+  case "$engine" in
+    meilisearch)
+      user=meilisearch home=/var/lib/meilisearch data=/var/lib/meilisearch/data
+      bin=/usr/local/bin/meilisearch unit=meilisearch cfgfile=/etc/meilisearch.toml
+      ;;
+    typesense)
+      user=typesense home=/var/lib/typesense data=/var/lib/typesense/data
+      bin=/usr/local/bin/typesense-server unit=typesense cfgfile=/etc/typesense/typesense-server.ini
+      ;;
+    *) return 0 ;;
+  esac
+  unitfile="$SYSTEMD_DIR/$unit.service"
+
+  if ! mod_on "$engine"; then
+    if [ "$DRY" -eq 1 ]; then
+      log "would stop $engine (keep binary, data and keys, no boot start)"
+    elif [ -f "$unitfile" ] && grep -qxF "$SEARCH_MARK" "$unitfile"; then
+      log "$engine off: stop, disable boot start (binary, data and keys stay)"
+      systemctl disable --now "$unit" >/dev/null 2>&1 || true
+    fi
+    return 0
+  fi
+
+  version="$(jq -r --arg e "$engine" '.[$e].version // empty' "$VERSIONS")"
+  if ! [[ "$version" =~ ^[0-9]+(\.[0-9]+){1,2}$ ]]; then
+    log "$engine: no version in $VERSIONS"
+    SEARCH_FAILED=1
+    return 0
+  fi
+  if [ "$DRY" -eq 1 ]; then
+    log "would install/enable $engine $version"
+    return 0
+  fi
+  if [ -f "$unitfile" ] && ! grep -qxF "$SEARCH_MARK" "$unitfile"; then
+    log "$engine: $unitfile was not written by schela; leaving it alone"
+    SEARCH_FAILED=1
+    return 0
+  fi
+  if ! arch="$(search_arch)"; then
+    log "$engine: no release for $(uname -m)"
+    SEARCH_FAILED=1
+    return 0
+  fi
+  sum="$(jq -r --arg e "$engine" --arg a "$arch" '.[$e].sha256[$a] // empty' "$VERSIONS")"
+  case "$engine" in
+    meilisearch)
+      url="https://github.com/meilisearch/meilisearch/releases/download/v${version}/meilisearch-linux-${arch/arm64/aarch64}"
+      ;;
+    typesense)
+      url="https://dl.typesense.org/releases/${version}/typesense-server-${version}-linux-${arch}.tar.gz"
+      ;;
+  esac
+
+  if ! id -u "$user" >/dev/null 2>&1; then
+    useradd --system --user-group --home-dir "$home" --no-create-home --shell "$(nologin_shell)" "$user"
+  fi
+  install -d -m 0750 -o "$user" -g "$user" "$home" "$data"
+  if [ "$engine" = meilisearch ]; then
+    install -d -m 0750 -o "$user" -g "$user" "$home/dumps" "$home/snapshots" "$home/tmp"
+  fi
+  if ! key="$(search_secret "$engine")"; then
+    log "$engine: bad master key in $SEARCH_SECRETS/$engine.key"
+    SEARCH_FAILED=1
+    return 0
+  fi
+
+  rc=0
+  search_install "$engine" "$bin" "$version" "$url" "$sum" "$unit" "$data" || rc=$?
+  case "$rc" in
+    0) restart=1 ;;
+    1) ;;
+    *)
+      SEARCH_FAILED=1
+      return 0
+      ;;
+  esac
+  if [ ! -x "$bin" ]; then
+    SEARCH_FAILED=1
+    return 0
+  fi
+
+  case "$engine" in
+    meilisearch)
+      cfg="${SEARCH_MARK}
+env = \"production\"
+master_key = \"${key}\"
+db_path = \"${data}\"
+dump_dir = \"${home}/dumps\"
+snapshot_dir = \"${home}/snapshots\"
+http_addr = \"127.0.0.1:7700\"
+no_analytics = true"
+      # --upgrade-db lets a newer release migrate the data on its first start;
+      # on an up-to-date database it does nothing.
+      exec="$bin --config-file-path $cfgfile --upgrade-db"
+      extra="Environment=TMPDIR=${home}/tmp"
+      ;;
+    typesense)
+      mkdir -p "$(dirname "$cfgfile")"
+      cfg="${SEARCH_MARK}
+[server]
+api-address = 127.0.0.1
+api-port = 8108
+data-dir = ${data}
+api-key = ${key}"
+      exec="$bin --config=$cfgfile"
+      # The limits of the vendor's own unit.
+      extra="LimitNOFILE=64000
+LimitMEMLOCK=infinity"
+      ;;
+  esac
+  write_owned "$cfgfile" "root:$user" 0640 "$cfg" && restart=1
+  if write_owned "$unitfile" root:root 0644 "$(search_unit "$engine (managed by Schela)" "$user" "$home" "$exec" "$extra")"; then
+    systemctl daemon-reload
+    restart=1
+  fi
+
+  systemctl unmask "$unit" >/dev/null 2>&1 || true
+  systemctl enable "$unit" >/dev/null 2>&1 || true
+  if [ "$restart" -eq 1 ]; then
+    log "$engine $version: restart"
+    systemctl restart "$unit" || { log "$engine did not start"; SEARCH_FAILED=1; }
+  else
+    systemctl start "$unit" || { log "$engine did not start"; SEARCH_FAILED=1; }
+  fi
+}
+
 # --- dns -------------------------------------------------------------------
 apply_dns() {
   mod_on dns || return 0
@@ -1151,6 +1465,8 @@ apply_backups
 apply_redis
 apply_mariadb
 apply_postgresql
+apply_search meilisearch
+apply_search typesense
 
 if [ "$DRY" -eq 0 ]; then
   mkdir -p "$ACME_ROOT/.well-known/acme-challenge"
@@ -1169,4 +1485,5 @@ fi
 # A failed database sync must not hold back nginx and TLS, but the panel
 # still has to hear about it.
 [ "$DB_FAILED" -eq 0 ] || die "database changes were not fully applied (see the log above)"
+[ "$SEARCH_FAILED" -eq 0 ] || die "search engine changes were not fully applied (see the log above)"
 log "done"

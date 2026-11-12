@@ -161,6 +161,7 @@ export async function dumpAndApply(sql: Sql): Promise<void> {
     },
     modules: moduleMap,
     sites: sites.map((site) => ({
+      id: site.id,
       domain: site.domain,
       systemUser: site.systemUser,
       pool: site.pool,
@@ -174,6 +175,7 @@ export async function dumpAndApply(sql: Sql): Promise<void> {
       ip: site.ipAddress || "",
     })),
     apps: apps.map((app) => ({
+      id: app.id,
       name: app.name,
       domain: app.domain,
       nodeVersion: app.nodeVersion,

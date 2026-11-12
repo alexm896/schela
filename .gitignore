@@ -16,3 +16,4 @@ pglite-debug.log
 *.tsbuildinfo
 __pycache__/
 *.pyc
+.cache/
