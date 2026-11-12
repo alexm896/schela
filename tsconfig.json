@@ -27,7 +27,9 @@
         "./src/*"
       ]
     },
-    "allowImportingTsExtensions": true
+    "allowImportingTsExtensions": true,
+    // src/features/runtimes/catalog.ts reads installer/versions.json.
+    "resolveJsonModule": true
   },
   "include": [
     "src"

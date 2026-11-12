@@ -23,31 +23,29 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { createApp, deleteApp, getAppRemoval, listApps, updateApp } from "@/features/apps/api";
-import { NODE_VERSIONS, nodeUserFromDomain } from "@/features/apps/apps";
+import { nodeUserFromDomain } from "@/features/apps/apps";
+import { getRuntimes } from "@/features/runtimes/api";
+import { VersionSelect } from "@/features/runtimes/components/version-select";
 import type { NodeApp } from "@/features/apps/types";
 import { notifyRemoved } from "@/lib/notify";
 
 export const Route = createFileRoute("/_panel/apps")({
-  loader: () => listApps(),
+  loader: async () => {
+    const [apps, runtimes] = await Promise.all([listApps(), getRuntimes()]);
+    return { apps, node: runtimes.node };
+  },
   component: AppsPage,
 });
 
 function AppsPage() {
-  const apps = Route.useLoaderData();
+  const { apps, node } = Route.useLoaderData();
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [domain, setDomain] = useState("");
   const [name, setName] = useState("");
-  const [nodeVersion, setNodeVersion] = useState("22");
+  const [nodeVersion, setNodeVersion] = useState(node.default);
   const [entry, setEntry] = useState("server.js");
   const [instances, setInstances] = useState("1");
   const [removing, setRemoving] = useState<NodeApp | null>(null);
@@ -116,25 +114,18 @@ function AppsPage() {
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
-                  <Select
+                  <VersionSelect
+                    choices={node}
                     value={app.nodeVersion}
+                    current={app.nodeVersion}
                     onValueChange={(v) =>
                       void updateApp({ data: { id: app.id, nodeVersion: v } }).then(() =>
                         router.invalidate(),
                       )
                     }
-                  >
-                    <SelectTrigger className="h-9 w-28">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {NODE_VERSIONS.map((v) => (
-                        <SelectItem key={v} value={v}>
-                          Node {v}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                    prefix="Node "
+                    triggerClassName="h-9 w-36"
+                  />
                   {app.ipAddress ? (
                     <Badge variant="outline" className="font-mono">
                       {app.ipAddress}
@@ -215,18 +206,7 @@ function AppsPage() {
             <div className="grid grid-cols-2 gap-3">
               <div className="grid gap-2">
                 <Label>Node</Label>
-                <Select value={nodeVersion} onValueChange={setNodeVersion}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {NODE_VERSIONS.map((v) => (
-                      <SelectItem key={v} value={v}>
-                        {v}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <VersionSelect choices={node} value={nodeVersion} onValueChange={setNodeVersion} />
               </div>
               <div className="grid gap-2">
                 <Label htmlFor="entry">Entry</Label>

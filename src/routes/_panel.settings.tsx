@@ -8,20 +8,23 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { NODE_VERSIONS } from "@/features/apps/apps";
 import { getPanelState, updateSettings } from "@/features/settings/api";
-import { PHP_VERSIONS } from "@/features/sites/sites";
+import { getRuntimes } from "@/features/runtimes/api";
 
 export const Route = createFileRoute("/_panel/settings")({
   loader: async () => {
-    const [state, admin] = await Promise.all([getPanelState(), getAdminIdentity()]);
-    return { ...state, admin };
+    const [state, admin, runtimes] = await Promise.all([
+      getPanelState(),
+      getAdminIdentity(),
+      getRuntimes(),
+    ]);
+    return { ...state, admin, runtimes };
   },
   component: SettingsPage,
 });
 
 function SettingsPage() {
-  const { settings, admin } = Route.useLoaderData();
+  const { settings, admin, runtimes } = Route.useLoaderData();
   const router = useRouter();
   const [hostname, setHostname] = useState(settings.hostname);
   const [sshPort, setSshPort] = useState(String(settings.sshPort));
@@ -166,7 +169,7 @@ function SettingsPage() {
           </CardHeader>
           <CardContent>
             <ul className="flex flex-wrap gap-2">
-              {PHP_VERSIONS.map((v) => (
+              {runtimes.php.selectable.map((v) => (
                 <li
                   key={v}
                   className="rounded-full bg-secondary px-3 py-1 font-mono text-xs"
@@ -187,7 +190,7 @@ function SettingsPage() {
           </CardHeader>
           <CardContent>
             <ul className="flex flex-wrap gap-2">
-              {NODE_VERSIONS.map((v) => (
+              {runtimes.node.selectable.map((v) => (
                 <li
                   key={v}
                   className="rounded-full bg-secondary px-3 py-1 font-mono text-xs"

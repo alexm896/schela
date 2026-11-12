@@ -1,9 +1,5 @@
-// Node apps: versions on offer and the system user each app runs as.
+// Node apps: the system user each app runs as.
 // Pure, shared by the server functions and the UI.
-
-export const NODE_VERSIONS = ["18", "20", "22"] as const;
-
-export type NodeVersion = (typeof NODE_VERSIONS)[number];
 
 export function nodeUserFromDomain(domain: string) {
   const slug = domain

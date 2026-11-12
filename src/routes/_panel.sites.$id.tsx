@@ -18,23 +18,27 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { SiteDatabasesCard } from "@/features/databases/components/site-databases";
+import { getRuntimes } from "@/features/runtimes/api";
+import { VersionSelect } from "@/features/runtimes/components/version-select";
 import { deleteSite, getSite, getSiteRemoval, retrySiteTls, updateSite } from "@/features/sites/api";
 import { normalizeWebRoot, webRootFromRoot } from "@/features/sites/site-root";
-import { PHP_VERSIONS } from "@/features/sites/sites";
 import { SiteWorkersCard } from "@/features/workers/components/site-workers";
 import { notifyRemoved } from "@/lib/notify";
 
 export const Route = createFileRoute("/_panel/sites/$id")({
   loader: async ({ params }) => {
-    const site = await getSite({ data: { id: Number(params.id) } });
+    const [site, runtimes] = await Promise.all([
+      getSite({ data: { id: Number(params.id) } }),
+      getRuntimes(),
+    ]);
     if (!site) throw new Error("Site not found");
-    return site;
+    return { site, php: runtimes.php };
   },
   component: SiteDetail,
 });
 
 function SiteDetail() {
-  const site = Route.useLoaderData();
+  const { site, php } = Route.useLoaderData();
   const router = useRouter();
   const navigate = useNavigate();
   const savedWebRoot = webRootFromRoot(site.systemUser, site.root);
@@ -144,21 +148,14 @@ function SiteDetail() {
             </div>
             <div className="grid gap-2">
               <Label>Version</Label>
-              <Select
+              <VersionSelect
+                choices={php}
                 value={site.phpVersion}
+                current={site.phpVersion}
                 onValueChange={(v) => void patch({ id: site.id, phpVersion: v })}
-              >
-                <SelectTrigger className="max-w-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {PHP_VERSIONS.map((v) => (
-                    <SelectItem key={v} value={v}>
-                      PHP {v}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                prefix="PHP "
+                triggerClassName="max-w-xs"
+              />
               <p className="text-xs text-muted-foreground">
                 Reloads only this site’s PHP-FPM pool. Other sites keep their version.
               </p>

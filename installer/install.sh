@@ -1,11 +1,14 @@
 #!/bin/bash
-# Schela installer — Ubuntu 22.04/24.04 and Debian 12/13.
+# Schela installer: Ubuntu 22.04/24.04/26.04 and Debian 12/13.
 # Run from the repo: sudo bash install.sh
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/.." && pwd)"
 VERSION="$(cat "$HERE/VERSION" 2>/dev/null || echo 0.1.0)"
+CATALOG="$HERE/versions.json"
+# shellcheck source=installer/lib.sh
+. "$HERE/lib.sh"
 export DEBIAN_FRONTEND=noninteractive
 
 read -r -d '' SCHELA_LOGO <<'LOGO' || true
@@ -37,12 +40,8 @@ have() { command -v "$1" >/dev/null 2>&1; }
 # shellcheck disable=SC1091
 . /etc/os-release
 
-case "${ID:-}-${VERSION_ID:-}" in
-  ubuntu-22.04|ubuntu-24.04|debian-12|debian-13) ;;
-  *)
-    die "Supported: Ubuntu 22.04/24.04 and Debian 12/13. Found ${ID:-unknown} ${VERSION_ID:-}."
-    ;;
-esac
+os_supported "${ID:-}" "${VERSION_ID:-}" \
+  || die "Supported: Ubuntu 22.04/24.04/26.04 and Debian 12/13. Found ${ID:-unknown} ${VERSION_ID:-}."
 
 # Quiet TUI: real work runs in the background; this process only draws a bar.
 if [ "${SCHELA_INNER:-0}" != "1" ] && [ "${SCHELA_VERBOSE:-0}" != "1" ]; then
@@ -115,38 +114,29 @@ apt-get update -y
 apt-get install -y --no-install-recommends \
   ca-certificates curl gnupg apt-transport-https lsb-release \
   unzip jq rsync ufw fail2ban nginx certbot python3-certbot-nginx \
-  unattended-upgrades apt-listchanges cron \
-  build-essential python3
+  unattended-upgrades apt-listchanges cron sudo \
+  build-essential python3 libatomic1
 
-# PHP 8.1–8.4 (Ondřej / Sury)
-log "PHP repositories"
-if [ "${ID}" = "ubuntu" ]; then
-  apt-get install -y --no-install-recommends software-properties-common
-  add-apt-repository -y ppa:ondrej/php
-else
-  curl -fsSLo /tmp/debsuryorg-archive-keyring.deb https://packages.sury.org/debsuryorg-archive-keyring.deb
-  dpkg -i /tmp/debsuryorg-archive-keyring.deb
-  sh -c "echo 'deb https://packages.sury.org/php/ $(lsb_release -sc) main' > /etc/apt/sources.list.d/php.list"
-fi
+# PHP from packages.sury.org: every supported version on every supported system.
+mapfile -t PHP_VERSIONS < <(versions_list "$CATALOG" php supported)
+[ "${#PHP_VERSIONS[@]}" -gt 0 ] || die "no PHP versions in $CATALOG"
+log "PHP ${PHP_VERSIONS[*]}"
+setup_php_repo "${VERSION_CODENAME:?no VERSION_CODENAME in /etc/os-release}"
 apt-get update -y
+mapfile -t PHP_PKGS < <(php_packages "${PHP_VERSIONS[@]}")
+apt-get install -y --no-install-recommends "${PHP_PKGS[@]}"
 
-PHP_PKGS=""
-for ver in 8.1 8.2 8.3 8.4; do
-  PHP_PKGS="$PHP_PKGS php${ver}-fpm php${ver}-cli php${ver}-common php${ver}-curl php${ver}-mbstring php${ver}-xml php${ver}-zip php${ver}-gd php${ver}-intl php${ver}-bcmath php${ver}-opcache php${ver}-sqlite3 php${ver}-mysql php${ver}-readline"
+# Node via n (pinned and checksummed); the default version is installed last
+# so it is the one on PATH.
+mapfile -t NODE_VERSIONS < <(versions_list "$CATALOG" node supported)
+NODE_DEFAULT="$(versions_list "$CATALOG" node default)"
+[ "${#NODE_VERSIONS[@]}" -gt 0 ] && [ -n "$NODE_DEFAULT" ] || die "no Node versions in $CATALOG"
+log "Node.js ${NODE_VERSIONS[*]}"
+install_n /usr/local/bin/n
+for ver in "${NODE_VERSIONS[@]}"; do
+  n "$ver"
 done
-# shellcheck disable=SC2086
-apt-get install -y --no-install-recommends $PHP_PKGS
-
-# Node 18/20/22 via n
-log "Node.js 18, 20, 22"
-if [ ! -x /usr/local/bin/n ]; then
-  curl -fsSL https://raw.githubusercontent.com/tj/n/master/bin/n -o /usr/local/bin/n
-  chmod 0755 /usr/local/bin/n
-fi
-n 22
-n 20
-n 18
-n 22
+n "$NODE_DEFAULT"
 ln -sfn /usr/local/bin/node /usr/bin/node
 ln -sfn /usr/local/bin/npm /usr/bin/npm
 
@@ -243,6 +233,7 @@ visudo -cf /etc/sudoers.d/schela >/dev/null
 mkdir -p /usr/local/share/schela
 rsync -a "$HERE/templates/" /usr/local/share/schela/templates/
 install -m 0644 "$HERE/VERSION" /usr/local/share/schela/VERSION
+install -m 0644 "$CATALOG" /usr/local/share/schela/versions.json
 
 log "Build panel"
 cd /opt/schela

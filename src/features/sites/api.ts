@@ -3,6 +3,7 @@ import { z } from "zod";
 import { authMiddleware } from "@/auth/middleware";
 import { ensureHostDns } from "@/features/dns/records";
 import { HOSTING_REMOVAL_OPTIONS } from "@/features/hosting/hosting";
+import { assertVersionAllowed } from "@/features/runtimes/installed";
 import { normalizeDomain } from "@/lib/utils";
 import { logActivity } from "@/server/activity";
 import { applyAfterChange } from "@/server/apply";
@@ -80,6 +81,7 @@ export const createSite = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
   .validator(siteCreateSchema)
   .handler(async ({ data }) => {
+    await assertVersionAllowed("php", data.phpVersion);
     const sql = await getSql();
     const domain = normalizeDomain(data.domain);
     const user = systemUserFromDomain(domain);
@@ -118,6 +120,7 @@ export const updateSite = createServerFn({ method: "POST" })
     if (!currentRows[0]) throw new Error("Site not found");
     const current = mapSite(currentRows[0]);
     const phpVersion = data.phpVersion ?? current.phpVersion;
+    await assertVersionAllowed("php", phpVersion, current.phpVersion);
     const user = current.systemUser;
     const pool = `php${phpVersion.replace(".", "")}-${user}`;
     const memoryLimit = data.memoryLimit ?? current.memoryLimit;
