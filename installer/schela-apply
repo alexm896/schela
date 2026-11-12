@@ -4,6 +4,9 @@ set -euo pipefail
 
 STATE="${SCHELA_STATE:-/var/lib/schela/state.json}"
 TEMPLATES="${SCHELA_TEMPLATES:-/usr/local/share/schela/templates}"
+# PHP and Node versions the panel knows: supported ones plus retired ones that
+# existing sites and apps may still run on.
+VERSIONS="${SCHELA_VERSIONS:-/usr/local/share/schela/versions.json}"
 DRY=0
 [ "${1:-}" = "--dry-run" ] && DRY=1
 
@@ -13,8 +16,9 @@ need() { command -v "$1" >/dev/null 2>&1 || die "missing $1"; }
 
 ok_domain() { [[ "$1" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$ ]]; }
 ok_user()   { [[ "$1" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]]; }
-ok_php()    { [[ "$1" =~ ^8\.[1-4]$ ]]; }
-ok_node()   { [[ "$1" =~ ^(18|20|22)$ ]]; }
+ok_php()    { [[ "$1" =~ ^[0-9]+\.[0-9]+$ ]] && in_list "$1" "${PHP_KNOWN[@]}"; }
+ok_node()   { [[ "$1" =~ ^[0-9]+$ ]] && in_list "$1" "${NODE_KNOWN[@]}"; }
+in_list()   { local want="$1" v; shift; for v in "$@"; do [ "$v" = "$want" ] && return 0; done; return 1; }
 ok_port()   { [[ "$1" =~ ^[0-9]{1,5}$ ]] && [ "$1" -ge 1 ] && [ "$1" -le 65535 ]; }
 ok_ipv4()   { [[ "$1" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; }
 
@@ -72,12 +76,26 @@ bind_http() {
   fi
 }
 
+# nginx 1.25.1 moved HTTP/2 from a `listen` flag to its own `http2 on;`
+# directive and warns about the flag; older nginx does not know the directive.
+nginx_http2_directive() {
+  local v
+  v="$(nginx -v 2>&1 | sed -n 's|.*nginx/\([0-9][0-9.]*\).*|\1|p')"
+  [ -n "$v" ] || return 1
+  [ "$(printf '%s\n1.25.1\n' "$v" | sort -V | head -n1)" = "1.25.1" ]
+}
+
 bind_https() {
   ip="${1:-}"
+  local h2=" http2" tail=""
+  if [ "${HTTP2_DIRECTIVE:-0}" -eq 1 ]; then
+    h2=""
+    tail=";\n    http2 on"
+  fi
   if ok_ipv4 "$ip"; then
-    printf '%s:443 ssl http2' "$ip"
+    printf '%s:443 ssl%s%b' "$ip" "$h2" "$tail"
   else
-    printf '443 ssl http2;\n    listen [::]:443 ssl http2'
+    printf '443 ssl%s;\n    listen [::]:443 ssl%s%b' "$h2" "$h2" "$tail"
   fi
 }
 
@@ -111,6 +129,12 @@ ensure_home() {
 need jq
 need nginx
 [ -f "$STATE" ] || die "no state at $STATE"
+[ -r "$VERSIONS" ] || die "no version catalog at $VERSIONS"
+mapfile -t PHP_KNOWN < <(jq -r '.php.supported[], .php.retired[]' "$VERSIONS")
+mapfile -t NODE_KNOWN < <(jq -r '.node.supported[], .node.retired[]' "$VERSIONS")
+[ "${#PHP_KNOWN[@]}" -gt 0 ] && [ "${#NODE_KNOWN[@]}" -gt 0 ] || die "bad version catalog at $VERSIONS"
+HTTP2_DIRECTIVE=0
+nginx_http2_directive && HTTP2_DIRECTIVE=1
 
 mod_on() {
   jq -e --arg s "$1" '.modules[$s] == true' "$STATE" >/dev/null 2>&1
@@ -256,7 +280,7 @@ apply_sites() {
   done < <(jq -c '.sites // [] | .[]' "$STATE")
 
   if [ "$DRY" -eq 0 ]; then
-    for ver in 8.1 8.2 8.3 8.4; do
+    for ver in "${PHP_KNOWN[@]}"; do
       if [ -d "/etc/php/${ver}/fpm" ]; then
         systemctl enable --now "php${ver}-fpm" >/dev/null 2>&1 || true
         systemctl reload "php${ver}-fpm" >/dev/null 2>&1 || systemctl restart "php${ver}-fpm" || true
@@ -666,6 +690,9 @@ apply_mail() {
 # Managed by schela-apply (Dovecot 2.4)
 mail_driver = maildir
 mail_path = /var/mail/schela/%{user | domain}/%{user | username}
+# The distro's 10-mail.conf points INBOX at /var/mail/%{user}, which vmail
+# cannot create; with maildir the INBOX is the maildir itself.
+mail_inbox_path =
 mail_uid = vmail
 mail_gid = vmail
 first_valid_uid = ${vuid}

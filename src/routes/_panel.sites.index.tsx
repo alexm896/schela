@@ -16,28 +16,26 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { createSite, listSites } from "@/features/sites/api";
-import { PHP_VERSIONS, systemUserFromDomain } from "@/features/sites/sites";
+import { getRuntimes } from "@/features/runtimes/api";
+import { VersionSelect } from "@/features/runtimes/components/version-select";
+import { systemUserFromDomain } from "@/features/sites/sites";
 
 export const Route = createFileRoute("/_panel/sites/")({
-  loader: () => listSites(),
+  loader: async () => {
+    const [sites, runtimes] = await Promise.all([listSites(), getRuntimes()]);
+    return { sites, php: runtimes.php };
+  },
   component: SitesPage,
 });
 
 function SitesPage() {
-  const sites = Route.useLoaderData();
+  const { sites, php } = Route.useLoaderData();
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [domain, setDomain] = useState("");
-  const [phpVersion, setPhpVersion] = useState("8.3");
+  const [phpVersion, setPhpVersion] = useState(php.default);
   const [isolated, setIsolated] = useState(true);
   const [ssl, setSsl] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -143,18 +141,12 @@ function SitesPage() {
             </div>
             <div className="grid gap-2">
               <Label>PHP version</Label>
-              <Select value={phpVersion} onValueChange={setPhpVersion}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {PHP_VERSIONS.map((v) => (
-                    <SelectItem key={v} value={v}>
-                      PHP {v}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <VersionSelect
+                choices={php}
+                value={phpVersion}
+                onValueChange={setPhpVersion}
+                prefix="PHP "
+              />
             </div>
             <div className="flex items-center justify-between rounded-lg bg-secondary px-3 py-3">
               <div>

@@ -14,13 +14,14 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "node --test 'scripts/**/*.test.mjs' && node --experimental-strip-types --test 'src/**/*.test.ts'",
+    "test:auth": "node scripts/auth-smoke.mjs",
     "lint": "eslint .",
     "format": "prettier --write ."
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.4",
     "@hookform/resolvers": "^5.7.0",
-    "better-auth": "~1.6.30",
+    "better-auth": "~1.7.22",
     "kysely": "^0.28.5",
     "pg": "^8.16.3",
     "@radix-ui/react-accordion": "^1.2.12",

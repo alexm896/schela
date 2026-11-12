@@ -7,11 +7,11 @@ A small, fast hosting control panel for a **fresh Ubuntu or Debian VPS**.
 **https://schela.org**
 
 
-PHP 8.1–8.4, Node 18/20/22, per-site jails, UFW, optional mail and DNS. The panel is the source of truth — every site, app, firewall, mailbox, and zone is written onto the box.
+PHP 8.2-8.5, Node 22/24/26, per-site jails, UFW, optional mail and DNS. The panel is the source of truth: every site, app, firewall, mailbox, and zone is written onto the box.
 
 ## Install (about five minutes)
 
-On a **new** Ubuntu 22.04 / 24.04 or Debian 12 machine as root. 2 GB RAM recommended.
+On a **new** Ubuntu 22.04 / 24.04 / 26.04 or Debian 12 / 13 machine as root. 2 GB RAM recommended.
 
 ```bash
 git clone https://github.com/imariusalin/schela.git

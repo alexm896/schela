@@ -5,13 +5,19 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 INS="$ROOT/installer"
 fail() { printf 'FAIL %s\n' "$*" >&2; exit 1; }
 pass() { printf 'ok   %s\n' "$*"; }
+# schela-apply reads the PHP and Node versions it accepts from this catalog.
+export SCHELA_VERSIONS="$INS/versions.json"
 
 echo "== syntax"
 python3 -m py_compile "$INS/schela-files" "$INS/schela-backup" "$INS/schela-workers" "$INS/schela-db" "$INS/schela-purge"
 bash -n "$INS/schela-apply"
 bash -n "$INS/schela"
 bash -n "$INS/install.sh"
+bash -n "$INS/lib.sh"
 pass "python/bash syntax"
+
+bash "$ROOT/installer/test/lib.sh"
+bash "$ROOT/installer/test/sudo.sh"
 
 echo "== sudoers"
 grep -q 'NOPASSWD: /usr/local/sbin/schela-backup run \*' "$INS/templates/sudoers" \
@@ -501,6 +507,101 @@ apply_now
 pass "units of deleted Node apps are stopped and removed, others are left alone"
 rm -f "$SCHELA_SYSTEMD_DIR"/schela-app*.service "$SCHELA_SYSTEMD_DIR/unrelated.service"
 
+echo "== runtime versions (installer/versions.json)"
+rt_site() { # domain user php
+  printf '{"domain":"%s","systemUser":"%s","pool":"php%s-%s","phpVersion":"%s","memoryLimit":"256M","root":"/home/%s/www","status":"active","isolated":true,"ssl":false,"forceHttps":false,"ip":""}' \
+    "$1" "$2" "${3/./}" "$2" "$3" "$2"
+}
+rt_app() { # name node
+  printf '{"name":"%s","domain":"%s.test","nodeVersion":"%s","port":3100,"entry":"index.js","status":"running","ip":""}' "$1" "$1" "$2"
+}
+for u in s_rt; do id -u "$u" >/dev/null 2>&1 || useradd --home "/home/$u" --create-home --shell /usr/sbin/nologin "$u"; done
+
+rm -rf /etc/php/8.5
+write_state '[]' "[$(rt_site rt.test s_rt 8.5)]"
+apply_now
+[ -f /etc/php/8.5/fpm/pool.d/schela-php85-s_rt.conf ] || { cat /tmp/schela-apply.out; fail "PHP 8.5 site got no pool"; }
+grep -q 'fastcgi_pass unix:/run/php/php85-s_rt.sock' /etc/nginx/schela.d/site-rt.test.conf || fail "PHP 8.5 site vhost not on its pool"
+grep -qx 'reload php8.5-fpm' /tmp/systemctl.log || fail "php8.5-fpm not reloaded"
+pass "a PHP 8.5 site gets its pool, vhost and FPM reload"
+
+rm -rf /etc/php/8.1
+write_state '[]' "[$(rt_site rt.test s_rt 8.1)]"
+apply_now
+[ -f /etc/php/8.1/fpm/pool.d/schela-php81-s_rt.conf ] || fail "site on retired PHP 8.1 lost its pool"
+grep -q 'unix:/run/php/php81-s_rt.sock' /etc/nginx/schela.d/site-rt.test.conf || fail "site on retired PHP 8.1 lost its vhost"
+pass "a site on retired PHP 8.1 keeps running"
+
+rm -f /etc/nginx/schela.d/site-rt.test.conf
+write_state '[]' "[$(rt_site rt.test s_rt 7.4)]"
+apply_now
+grep -q 'skip rt.test, bad php 7.4' /tmp/schela-apply.out || fail "PHP 7.4 not refused"
+[ ! -e /etc/nginx/schela.d/site-rt.test.conf ] && [ ! -e /etc/php/7.4 ] || fail "PHP 7.4 site was written"
+pass "a PHP version outside the catalog is refused"
+
+W85='{"id":11,"name":"queue","domain":"rt.test","user":"s_rt","phpVersion":"8.5","argv":["php","artisan","queue:work"],"processes":1,"stopTimeout":60,"memoryMb":256,"enabled":true}'
+write_state "[$W85]" "[$(rt_site rt.test s_rt 8.5)]"
+apply_now
+grep -q '^ExecStart="/usr/bin/php8.5" "artisan" "queue:work"' "$SCHELA_SYSTEMD_DIR/schela-worker-11@.service" \
+  || { cat /tmp/schela-apply.out; fail "PHP 8.5 worker unit not written"; }
+pass "a PHP 8.5 worker gets its unit"
+rm -f "$SCHELA_SYSTEMD_DIR"/schela-worker-11@.service
+
+for v in 26 24 22 20 18; do
+  rm -f "$SCHELA_SYSTEMD_DIR"/schela-app-*.service
+  write_state '[]' '[]' "[$(rt_app rtnode "$v")]"
+  apply_now
+  [ -f "$SCHELA_SYSTEMD_DIR/schela-app-rtnode.service" ] || { cat /tmp/schela-apply.out; fail "Node $v app got no unit"; }
+done
+pass "Node 26, 24, 22 apps get units; apps on retired Node 20 and 18 keep theirs"
+
+rm -f "$SCHELA_SYSTEMD_DIR"/schela-app-*.service
+write_state '[]' '[]' "[$(rt_app rtnode 16)]"
+apply_now
+grep -q 'skip rtnode, bad node 16' /tmp/schela-apply.out || fail "Node 16 not refused"
+[ ! -e "$SCHELA_SYSTEMD_DIR/schela-app-rtnode.service" ] || fail "Node 16 app got a unit"
+pass "a Node version outside the catalog is refused"
+rm -f "$SCHELA_SYSTEMD_DIR"/schela-app-*.service
+
+write_state '[]' '[]'
+if SCHELA_VERSIONS=/nonexistent/versions.json bash "$INS/schela-apply" >/tmp/schela-apply.out 2>&1; then
+  fail "apply ran without a version catalog"
+fi
+grep -q 'no version catalog at /nonexistent/versions.json' /tmp/schela-apply.out || fail "missing catalog not reported"
+pass "apply stops with a clear error when the version catalog is missing"
+
+echo "== nginx HTTP/2 syntax"
+H2=h2.schela-ci.dev
+id -u s_h2 >/dev/null 2>&1 || useradd --home /home/s_h2 --create-home --shell /usr/sbin/nologin s_h2
+mkdir -p "/etc/letsencrypt/live/$H2"
+openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj "/CN=$H2" \
+  -keyout "/etc/letsencrypt/live/$H2/privkey.pem" -out "/etc/letsencrypt/live/$H2/fullchain.pem" >/dev/null 2>&1
+printf 'include /etc/nginx/schela.d/*.conf;\ninclude /etc/nginx/schela-apps.d/*.conf;\n' >/etc/nginx/conf.d/schela-includes.conf
+mkdir -p /etc/nginx/schela-apps.d
+rm -f /etc/nginx/schela.d/site-*.conf
+write_state '[]' "[{\"domain\":\"$H2\",\"systemUser\":\"s_h2\",\"pool\":\"php83-s_h2\",\"phpVersion\":\"8.3\",\"memoryLimit\":\"256M\",\"root\":\"/home/s_h2/www\",\"status\":\"active\",\"isolated\":true,\"ssl\":true,\"forceHttps\":false,\"ip\":\"\"}]" \
+  '[{"name":"h2app","domain":"h2app.schela-ci.dev","nodeVersion":"22","port":3200,"entry":"index.js","status":"running","ip":"","ssl":true}]'
+mkdir -p /etc/letsencrypt/live/h2app.schela-ci.dev
+cp "/etc/letsencrypt/live/$H2/"*.pem /etc/letsencrypt/live/h2app.schela-ci.dev/
+apply_now
+SSLCONF="/etc/nginx/schela.d/site-$H2-ssl.conf"
+[ -f "$SSLCONF" ] || { cat /tmp/schela-apply.out; fail "TLS vhost not written"; }
+[ -f /etc/nginx/schela-apps.d/app-h2app.schela-ci.dev-ssl.conf ] || fail "app TLS vhost not written"
+nginx -t >/tmp/nginx-t.out 2>&1 || { cat /tmp/nginx-t.out; fail "nginx -t"; }
+if grep -qi 'deprecated' /tmp/nginx-t.out; then cat /tmp/nginx-t.out; fail "nginx warns about the HTTP/2 syntax"; fi
+NGV="$(nginx -v 2>&1 | sed -n 's|.*nginx/\([0-9.]*\).*|\1|p')"
+if [ "$(printf '%s\n1.25.1\n' "$NGV" | sort -V | head -n1)" = "1.25.1" ]; then
+  grep -q '^    http2 on;' "$SSLCONF" || fail "nginx $NGV: no 'http2 on;'"
+  ! grep -q 'ssl http2' "$SSLCONF" || fail "nginx $NGV: deprecated 'listen ... http2'"
+else
+  grep -q 'listen 443 ssl http2;' "$SSLCONF" || fail "nginx $NGV: no 'listen ... ssl http2'"
+  ! grep -q 'http2 on;' "$SSLCONF" || fail "nginx $NGV: 'http2 on;' is unknown here"
+fi
+pass "nginx $NGV: HTTP/2 enabled with the syntax this nginx expects, nginx -t clean"
+rm -f /etc/nginx/schela.d/site-*.conf /etc/nginx/schela-apps.d/app-*.conf /etc/nginx/conf.d/schela-includes.conf
+rm -f "$SCHELA_SYSTEMD_DIR"/schela-app-*.service
+rm -rf /etc/letsencrypt/live/$H2 /etc/letsencrypt/live/h2app.schela-ci.dev
+
 for bin in systemctl journalctl; do
   rm -f "/usr/bin/$bin"
   [ -e "/usr/bin/$bin.real" ] && mv "/usr/bin/$bin.real" "/usr/bin/$bin"
@@ -510,6 +611,7 @@ unset SCHELA_SYSTEMD_DIR
 bash "$ROOT/installer/test/databases.sh"
 bash "$ROOT/installer/test/dns-zone.sh"
 bash "$ROOT/installer/test/purge.sh"
+bash "$ROOT/installer/test/mail.sh"
 
 echo "== schela-purge account"
 export SCHELA_STATE=/tmp/schela-purge-state.json

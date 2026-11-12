@@ -3,6 +3,7 @@ import { z } from "zod";
 import { authMiddleware } from "@/auth/middleware";
 import { ensureHostDns } from "@/features/dns/records";
 import { HOSTING_REMOVAL_OPTIONS } from "@/features/hosting/hosting";
+import { assertVersionAllowed } from "@/features/runtimes/installed";
 import { normalizeDomain } from "@/lib/utils";
 import { logActivity } from "@/server/activity";
 import { applyAfterChange } from "@/server/apply";
@@ -35,6 +36,7 @@ export const createApp = createServerFn({ method: "POST" })
     }),
   )
   .handler(async ({ data }) => {
+    await assertVersionAllowed("node", data.nodeVersion);
     const sql = await getSql();
     const domain = normalizeDomain(data.domain);
     const name = (data.name?.trim() || domain).slice(0, 80);
@@ -79,6 +81,7 @@ export const updateApp = createServerFn({ method: "POST" })
     if (!currentRows[0]) throw new Error("App not found");
     const current = mapApp(currentRows[0]);
     const nodeVersion = data.nodeVersion ?? current.nodeVersion;
+    await assertVersionAllowed("node", nodeVersion, current.nodeVersion);
     const status = data.status ?? current.status;
     const instances = data.instances ?? current.instances;
     const rows = await sql<Record<string, unknown>>`

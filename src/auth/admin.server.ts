@@ -52,11 +52,15 @@ export function createAdminUser(input: {
       );
     }
     const hash = await ctx.password.hash(input.password);
-    const user = await ctx.internalAdapter.createUser({
-      email: input.email.toLowerCase(),
-      name: input.name,
-      emailVerified: false,
-    });
+    // Same provisioning source Better Auth's own email sign-up passes.
+    const user = await ctx.internalAdapter.createUser(
+      {
+        email: input.email.toLowerCase(),
+        name: input.name,
+        emailVerified: false,
+      },
+      { method: "email-password" },
+    );
     if (!user) throw new Error("Could not create the admin account");
     await ctx.internalAdapter.linkAccount({
       userId: user.id,

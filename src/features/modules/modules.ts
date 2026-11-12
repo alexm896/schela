@@ -1,4 +1,6 @@
 import type { Sql } from "@/server/db";
+import { NODE_CATALOG, PHP_CATALOG } from "@/features/runtimes/catalog";
+import { versionsLabel } from "@/features/runtimes/runtimes";
 import { mapModule } from "./map";
 import type { ModuleRow } from "./types";
 
@@ -9,16 +11,16 @@ export const MODULES = [
   {
     slug: "php",
     name: "PHP",
-    description: "Multi-version PHP-FPM with per-site pools.",
-    version: "8.4",
+    description: `Multi-version PHP-FPM with per-site pools: PHP ${versionsLabel(PHP_CATALOG.supported)}.`,
+    version: PHP_CATALOG.supported[PHP_CATALOG.supported.length - 1],
     core: true,
     sort: 1,
   },
   {
     slug: "node",
     name: "Node.js",
-    description: "Process manager, reverse proxy, and Node 18–22.",
-    version: "22",
+    description: `Process manager, reverse proxy, and Node ${versionsLabel(NODE_CATALOG.supported)}.`,
+    version: NODE_CATALOG.supported[NODE_CATALOG.supported.length - 1],
     core: true,
     sort: 2,
   },
