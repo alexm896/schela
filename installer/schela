@@ -8,7 +8,7 @@ usage() {
 schela ${VERSION}
   apply [--dry-run]   write nginx, PHP-FPM, firewall, mail, DNS from panel state
   doctor              check nginx, PHP, disk, firewall
-  status              panel + stack units (nginx, redis if installed)
+  status              panel + stack units (nginx, redis, search engines if installed)
   fix                 put the panel on port 80 (disable welcome page, reload nginx)
   version
 EOF
@@ -59,6 +59,14 @@ case "$cmd" in
         echo " (disabled at boot — package kept)"
       fi
     fi
+    for unit in meilisearch typesense; do
+      [ -f "/etc/systemd/system/${unit}.service" ] || continue
+      if systemctl is-active --quiet "$unit"; then
+        echo "${unit}: running"
+      else
+        echo "${unit}: stopped"
+      fi
+    done
     ufw status | head -1 || true
     ;;
   doctor)
@@ -94,6 +102,22 @@ case "$cmd" in
     else
       echo "  not installed (enable the Redis module in the panel)"
     fi
+    for engine in meilisearch:7700 typesense:8108; do
+      unit="${engine%%:*}"
+      port="${engine##*:}"
+      echo "-- ${unit}"
+      if [ -f "/etc/systemd/system/${unit}.service" ]; then
+        printf '  active     %s\n' "$(systemctl is-active "$unit" 2>/dev/null || echo unknown)"
+        printf '  boot       %s\n' "$(systemctl is-enabled "$unit" 2>/dev/null || echo disabled)"
+        if curl -sf -o /dev/null "http://127.0.0.1:${port}/health"; then
+          echo "  health     ok on 127.0.0.1:${port}"
+        else
+          echo "  health     not answering on 127.0.0.1:${port}"
+        fi
+      else
+        echo "  not installed (enable the module in the panel)"
+      fi
+    done
     echo "-- disk"
     df -h / /var /home 2>/dev/null | awk 'NR==1 || /\/$|\/var|\/home/'
     echo "-- firewall"

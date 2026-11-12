@@ -26,6 +26,7 @@ import { Route as PanelIpsRouteImport } from './routes/_panel.ips'
 import { Route as PanelMailRouteImport } from './routes/_panel.mail'
 import { Route as PanelModulesRouteImport } from './routes/_panel.modules'
 import { Route as PanelRedisRouteImport } from './routes/_panel.redis'
+import { Route as PanelSearchRouteImport } from './routes/_panel.search'
 import { Route as PanelSettingsRouteImport } from './routes/_panel.settings'
 import { Route as PanelSitesRouteImport } from './routes/_panel.sites'
 import { Route as WebmailIndexRouteImport } from './routes/webmail.index'
@@ -118,6 +119,11 @@ const PanelRedisRoute = PanelRedisRouteImport.update({
   path: '/redis',
   getParentRoute: () => PanelRoute,
 } as any)
+const PanelSearchRoute = PanelSearchRouteImport.update({
+  id: '/search',
+  path: '/search',
+  getParentRoute: () => PanelRoute,
+} as any)
 const PanelSettingsRoute = PanelSettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
@@ -171,6 +177,7 @@ export interface FileRoutesByFullPath {
   '/mail': typeof PanelMailRoute
   '/modules': typeof PanelModulesRoute
   '/redis': typeof PanelRedisRoute
+  '/search': typeof PanelSearchRoute
   '/settings': typeof PanelSettingsRoute
   '/sites': typeof PanelSitesRouteWithChildren
   '/webmail/inbox': typeof WebmailInboxRoute
@@ -194,6 +201,7 @@ export interface FileRoutesByTo {
   '/mail': typeof PanelMailRoute
   '/modules': typeof PanelModulesRoute
   '/redis': typeof PanelRedisRoute
+  '/search': typeof PanelSearchRoute
   '/settings': typeof PanelSettingsRoute
   '/webmail/inbox': typeof WebmailInboxRoute
   '/': typeof PanelIndexRoute
@@ -220,6 +228,7 @@ export interface FileRoutesById {
   '/_panel/mail': typeof PanelMailRoute
   '/_panel/modules': typeof PanelModulesRoute
   '/_panel/redis': typeof PanelRedisRoute
+  '/_panel/search': typeof PanelSearchRoute
   '/_panel/settings': typeof PanelSettingsRoute
   '/_panel/sites': typeof PanelSitesRouteWithChildren
   '/webmail/inbox': typeof WebmailInboxRoute
@@ -248,6 +257,7 @@ export interface FileRouteTypes {
     | '/mail'
     | '/modules'
     | '/redis'
+    | '/search'
     | '/settings'
     | '/sites'
     | '/webmail/inbox'
@@ -271,6 +281,7 @@ export interface FileRouteTypes {
     | '/mail'
     | '/modules'
     | '/redis'
+    | '/search'
     | '/settings'
     | '/webmail/inbox'
     | '/'
@@ -296,6 +307,7 @@ export interface FileRouteTypes {
     | '/_panel/mail'
     | '/_panel/modules'
     | '/_panel/redis'
+    | '/_panel/search'
     | '/_panel/settings'
     | '/_panel/sites'
     | '/webmail/inbox'
@@ -435,6 +447,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PanelRedisRouteImport
       parentRoute: typeof PanelRoute
     }
+    '/_panel/search': {
+      id: '/_panel/search'
+      path: '/search'
+      fullPath: '/search'
+      preLoaderRoute: typeof PanelSearchRouteImport
+      parentRoute: typeof PanelRoute
+    }
     '/_panel/settings': {
       id: '/_panel/settings'
       path: '/settings'
@@ -514,6 +533,7 @@ interface PanelRouteChildren {
   PanelMailRoute: typeof PanelMailRoute
   PanelModulesRoute: typeof PanelModulesRoute
   PanelRedisRoute: typeof PanelRedisRoute
+  PanelSearchRoute: typeof PanelSearchRoute
   PanelSettingsRoute: typeof PanelSettingsRoute
   PanelSitesRoute: typeof PanelSitesRouteWithChildren
   PanelIndexRoute: typeof PanelIndexRoute
@@ -532,6 +552,7 @@ const PanelRouteChildren: PanelRouteChildren = {
   PanelMailRoute: PanelMailRoute,
   PanelModulesRoute: PanelModulesRoute,
   PanelRedisRoute: PanelRedisRoute,
+  PanelSearchRoute: PanelSearchRoute,
   PanelSettingsRoute: PanelSettingsRoute,
   PanelSitesRoute: PanelSitesRouteWithChildren,
   PanelIndexRoute: PanelIndexRoute,
