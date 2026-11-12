@@ -126,6 +126,13 @@ ensure_home() {
 }
 
 [ "$(id -u)" -eq 0 ] || die "root required"
+# One apply at a time. The panel starts one per change, and two at once race
+# on users, unit files and configs. A later apply waits its turn, then applies
+# the newest state.
+if [ "$DRY" -eq 0 ]; then
+  exec 9>"${SCHELA_APPLY_LOCK:-/run/schela-apply.lock}"
+  flock 9
+fi
 need jq
 need nginx
 [ -f "$STATE" ] || die "no state at $STATE"
