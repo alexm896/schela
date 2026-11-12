@@ -10,8 +10,10 @@ cd "$ROOT"
 bases=("$@")
 [ "${#bases[@]}" -gt 0 ] || bases=(ubuntu:22.04 ubuntu:24.04 ubuntu:26.04 debian:12 debian:13)
 failed=()
+# One image per checkout, so test runs from two worktrees never share an image.
+checkout="$(printf '%s' "$ROOT" | cksum | cut -d' ' -f1)"
 for base in "${bases[@]}"; do
-  tag="schela-installer-test:${base//[:.]/-}"
+  tag="schela-installer-test:${base//[:.]/-}-${checkout}"
   echo "######## $base"
   if ! docker build -q --build-arg "BASE=$base" -f installer/test/Dockerfile -t "$tag" . >/dev/null; then
     failed+=("$base (build)")
