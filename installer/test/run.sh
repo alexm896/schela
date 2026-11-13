@@ -9,7 +9,7 @@ pass() { printf 'ok   %s\n' "$*"; }
 export SCHELA_VERSIONS="$INS/versions.json"
 
 echo "== syntax"
-python3 -m py_compile "$INS/schela-files" "$INS/schela-backup" "$INS/schela-workers" "$INS/schela-db" "$INS/schela-purge" "$INS/schela-search"
+python3 -m py_compile "$INS/schela-files" "$INS/schela-backup" "$INS/schela-workers" "$INS/schela-db" "$INS/schela-purge" "$INS/schela-search" "$INS/schela-backup-keys"
 bash -n "$INS/schela-apply"
 bash -n "$INS/schela"
 bash -n "$INS/install.sh"
@@ -40,6 +40,9 @@ pass "sudoers pins schela-purge to no arguments"
 grep -qx 'schela ALL=(root) NOPASSWD: /usr/local/sbin/schela-search ""' "$INS/templates/sudoers" \
   || fail "sudoers must allow schela-search with no arguments only"
 pass "sudoers pins schela-search to no arguments"
+grep -qx 'schela ALL=(root) NOPASSWD: /usr/local/sbin/schela-backup-keys ""' "$INS/templates/sudoers" \
+  || fail "sudoers must allow schela-backup-keys with no arguments only"
+pass "sudoers pins schela-backup-keys to no arguments"
 
 echo "== schela-files jail"
 id -u s_demo >/dev/null 2>&1 || useradd --home /home/s_demo --create-home --shell /usr/sbin/nologin s_demo
@@ -620,6 +623,7 @@ bash "$ROOT/installer/test/purge.sh"
 bash "$ROOT/installer/test/mail.sh"
 bash "$ROOT/installer/test/panel-tls.sh"
 bash "$ROOT/installer/test/firewall.sh"
+bash "$ROOT/installer/test/secrets.sh"
 
 echo "== schela-purge account"
 export SCHELA_STATE=/tmp/schela-purge-state.json

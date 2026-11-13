@@ -56,6 +56,7 @@ function BackupsPage() {
       rsyncEnabled: form.rsyncEnabled,
       rsyncDest: form.rsyncDest,
       rsyncSshKey: form.rsyncSshKey,
+      rsyncKeyRemove: form.rsyncKeyRemove,
       s3Enabled: form.s3Enabled,
       s3Bucket: form.s3Bucket,
       s3Prefix: form.s3Prefix,
@@ -169,6 +170,7 @@ function BackupsPage() {
         open={open}
         onOpenChange={setOpen}
         editing={Boolean(editId)}
+        saved={jobs.find((j) => j.id === editId) ?? null}
         form={form}
         onPatch={patch}
         targets={targets}

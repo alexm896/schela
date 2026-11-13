@@ -14,19 +14,23 @@
  *   the password;
  * - each failed sign-in or code writes one "schela-auth: failed sign-in from
  *   <ip>" line and nothing secret;
- * - a database created before two-factor existed keeps its admin, who signs in.
+ * - a database created before two-factor existed keeps its admin, who signs in;
+ * - the installer's password does not linger in admin.env, and
+ *   `schela reset-admin-password` (its admin-reset.json) sets a new one, also
+ *   after the admin was renamed.
  *
  *   npm run test:auth
  */
 import { spawn } from "node:child_process";
 import { createHmac, randomBytes } from "node:crypto";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PGlite } from "@electric-sql/pglite";
 import { hashPassword } from "better-auth/crypto";
+import { toJSON } from "seroval";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const entry = join(root, ".output/server/index.mjs");
@@ -470,8 +474,81 @@ async function oldDatabase() {
   return panel;
 }
 
+/** admin.env and `schela reset-admin-password` (admin-reset.json). */
+async function adminFiles() {
+  const dataDir = mkdtempSync(join(tmpdir(), "schela-auth-"));
+  const adminDir = mkdtempSync(join(tmpdir(), "schela-auth-admin-"));
+  // As the installer of an older version left it.
+  writeFileSync(
+    join(adminDir, "admin.env"),
+    `SCHELA_ADMIN_PASSWORD=${PASSWORD}\nBETTER_AUTH_SECRET=auth-smoke-secret-0123456789abcdef\n`,
+  );
+  const panel = await startPanel(dataDir, {
+    SCHELA_ADMIN_DIR: adminDir,
+    SCHELA_ADMIN_PASSWORD: PASSWORD,
+  });
+  const o = panel.origin;
+  let ip = 60;
+  const signInStatus = async (email, password) =>
+    (await client(o, `192.0.2.${ip++}`).post("/sign-in/email", { email, password })).status;
+  // Root leaves the new password; the panel's next request sets it and deletes the file.
+  const reset = async (password) => {
+    writeFileSync(join(adminDir, "admin-reset.json"), JSON.stringify({ password }));
+    await fetch(`${o}/login`).then((r) => r.text());
+    return !existsSync(join(adminDir, "admin-reset.json"));
+  };
+  try {
+    check(
+      "admin.env keeps no password once the admin exists",
+      !readFileSync(join(adminDir, "admin.env"), "utf8").includes("SCHELA_ADMIN_PASSWORD"),
+    );
+    check("reset request is taken and deleted", await reset("Reset-Pass-456"));
+    check("reset password signs in", (await signInStatus(ADMIN_EMAIL, "Reset-Pass-456")) === 200);
+    check(
+      "old password is refused after a reset",
+      (await signInStatus(ADMIN_EMAIL, PASSWORD)) === 401,
+    );
+
+    // Renaming the admin (Settings) sets its credential account's accountId to
+    // the email, which Better Auth's sign-in then rejects. A reset must still
+    // leave an admin who can sign in.
+    const admin = client(o, `192.0.2.${ip++}`);
+    await admin.post("/sign-in/email", { email: ADMIN_EMAIL, password: "Reset-Pass-456" });
+    const manifest = readFileSync(join(root, ".output/server/_ssr/ssr.mjs"), "utf8");
+    const renameId = manifest.match(
+      /"([0-9a-f]{16,})": \{\s*functionName: "updateAdminIdentity_createServerFn_handler"/,
+    )?.[1];
+    const renamed = await fetch(`${o}/_serverFn/${renameId}`, {
+      method: "POST",
+      headers: {
+        Origin: o,
+        "Content-Type": "application/json",
+        "x-tsr-serverFn": "true",
+        Cookie: admin.jar.header(),
+      },
+      body: JSON.stringify(toJSON({ data: { username: "boss" } })),
+    });
+    const renameText = await renamed.text();
+    check(
+      "admin is renamed",
+      renamed.ok && renameText.includes("boss@schela.local"),
+      `HTTP ${renamed.status} ${renameText.slice(0, 200)}`,
+    );
+    await reset("Reset-Pass-789");
+    check(
+      "reset works after a rename",
+      (await signInStatus("boss@schela.local", "Reset-Pass-789")) === 200,
+    );
+  } finally {
+    await panel.stop();
+    rmSync(dataDir, { recursive: true, force: true });
+    rmSync(adminDir, { recursive: true, force: true });
+  }
+  return panel;
+}
+
 const panels = [];
-for (const run of [freshDatabase, oldDatabase]) {
+for (const run of [freshDatabase, oldDatabase, adminFiles]) {
   try {
     panels.push(await run());
   } catch (err) {

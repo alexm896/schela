@@ -11,6 +11,8 @@ schela ${VERSION}
   status              panel + stack units (nginx, redis, search engines if installed)
   fix                 put the panel on https (disable welcome page, certificate, reload nginx)
   url                 the panel address
+  reset-admin-password
+                      set a new random admin password and print it once (root only)
   version
 EOF
 }
@@ -55,6 +57,36 @@ activate_panel() {
   echo "schela: panel is at $(panel_url)"
 }
 
+# The panel sets the password itself (Better Auth hashes it) when its next
+# request finds admin-reset.json, then deletes the file. Nothing keeps it.
+reset_admin_password() {
+  [ "$(id -u)" -eq 0 ] || { echo "root required" >&2; exit 1; }
+  # sudoers lets the panel user run this script; the reset is root's alone.
+  [ "${SUDO_USER:-}" != schela ] || { echo "root required" >&2; exit 1; }
+  local dir=/var/lib/schela port pass req i
+  req="$dir/admin-reset.json"
+  port="$(sed -n 's/^Environment=PORT=//p' /etc/systemd/system/schela-panel.service 2>/dev/null | head -1 || true)"
+  port="${port:-9090}"
+  pass="$(openssl rand -hex 8)"
+  # Written as the panel user, into the panel's own directory: root never
+  # writes there through a link the panel user may have planted.
+  printf '{"password":"%s"}\n' "$pass" \
+    | runuser -u schela -- sh -c 'umask 077 && cat >"$1.tmp" && mv -f "$1.tmp" "$1"' sh "$req" \
+    || { echo "schela: could not write $req" >&2; exit 1; }
+  for i in $(seq 1 30); do
+    curl -sf -o /dev/null --max-time 5 "http://127.0.0.1:${port}/login" || true
+    [ -e "$req" ] || break
+    sleep 1
+  done
+  if [ -e "$req" ]; then
+    rm -f "$req"
+    echo "schela: the panel did not take the new password. Is schela-panel running?" >&2
+    exit 1
+  fi
+  printf 'New admin password: %s\n' "$pass"
+  printf 'Shown once and not saved anywhere.\n'
+}
+
 cmd="${1:-}"
 case "$cmd" in
   apply)
@@ -68,6 +100,9 @@ case "$cmd" in
     ;;
   url)
     panel_url
+    ;;
+  reset-admin-password)
+    reset_admin_password
     ;;
   status)
     systemctl is-active --quiet schela-panel && echo "panel: running" || echo "panel: down"

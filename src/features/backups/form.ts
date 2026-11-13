@@ -13,7 +13,9 @@ export type BackupForm = {
   retain: string;
   rsyncEnabled: boolean;
   rsyncDest: string;
+  /** A new SSH private key; blank keeps the stored one. */
   rsyncSshKey: string;
+  rsyncKeyRemove: boolean;
   s3Enabled: boolean;
   s3Bucket: string;
   s3Prefix: string;
@@ -34,6 +36,7 @@ export const emptyBackupForm = (): BackupForm => ({
   rsyncEnabled: false,
   rsyncDest: "",
   rsyncSshKey: "",
+  rsyncKeyRemove: false,
   s3Enabled: false,
   s3Bucket: "",
   s3Prefix: "schela/",
@@ -55,7 +58,8 @@ export function backupFormFromJob(job: BackupJob): BackupForm {
     retain: String(job.retain),
     rsyncEnabled: job.rsyncEnabled,
     rsyncDest: job.rsyncDest,
-    rsyncSshKey: job.rsyncSshKey,
+    rsyncSshKey: "",
+    rsyncKeyRemove: false,
     s3Enabled: job.s3Enabled,
     s3Bucket: job.s3Bucket,
     s3Prefix: job.s3Prefix,
