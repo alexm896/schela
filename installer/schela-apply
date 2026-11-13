@@ -623,6 +623,32 @@ apply_firewall() {
 }
 
 # --- mail ------------------------------------------------------------------
+# Server hostname certificate, maintained outside apply_mail (Let's Encrypt or
+# self-signed). Dovecot and Postfix read it as root before dropping privileges.
+MAIL_TLS_CERT="/var/lib/schela/tls/host.crt"
+MAIL_TLS_KEY="/var/lib/schela/tls/host.key"
+
+# Postfix submission on 587: TLS before AUTH, SASL through Dovecot, relay only
+# for authenticated users, and only as an address the login owns.
+mail_submission() {
+  postconf -M submission/inet="submission inet n - n - - smtpd"
+  local opt
+  for opt in \
+    syslog_name=postfix/submission \
+    smtpd_tls_security_level=encrypt \
+    smtpd_tls_auth_only=yes \
+    smtpd_sasl_auth_enable=yes \
+    smtpd_sasl_type=dovecot \
+    smtpd_sasl_path=private/auth \
+    smtpd_sasl_security_options=noanonymous \
+    smtpd_sender_login_maps=hash:/var/lib/schela/mail/senders \
+    smtpd_client_restrictions=permit_sasl_authenticated,reject \
+    smtpd_sender_restrictions=reject_sender_login_mismatch \
+    smtpd_relay_restrictions=permit_sasl_authenticated,reject; do
+    postconf -P "submission/inet/${opt}"
+  done
+}
+
 apply_mail() {
   mod_on mail || return 0
   [ -d /etc/postfix ] || return 0
@@ -644,6 +670,7 @@ apply_mail() {
   : >/var/lib/schela/mail/vmailbox
   : >/var/lib/schela/mail/vdomains
   : >/var/lib/schela/mail/users
+  : >/var/lib/schela/mail/senders
   while IFS= read -r box; do
     [ -n "$box" ] || continue
     addr="$(jq -r '.address' <<<"$box")"
@@ -656,6 +683,8 @@ apply_mail() {
     domain="${addr#*@}"
     localpart="${addr%@*}"
     printf '%s %s/\n' "$addr" "$domain/$localpart" >>/var/lib/schela/mail/vmailbox
+    # Each mailbox login owns exactly its own address on submission.
+    printf '%s %s\n' "$addr" "$addr" >>/var/lib/schela/mail/senders
     grep -qxF "$domain" /var/lib/schela/mail/vdomains 2>/dev/null || echo "$domain" >>/var/lib/schela/mail/vdomains
     mkdir -p "/var/mail/schela/${domain}/${localpart}/cur" \
              "/var/mail/schela/${domain}/${localpart}/new" \
@@ -683,15 +712,42 @@ apply_mail() {
   done < <(jq -c '.mailboxes // [] | .[]' "$STATE")
   chown -R vmail:vmail /var/mail/schela
   postmap /var/lib/schela/mail/vmailbox 2>/dev/null || true
-  chown root:root /var/lib/schela/mail/vmailbox /var/lib/schela/mail/vmailbox.db /var/lib/schela/mail/vdomains 2>/dev/null || true
-  chmod 644 /var/lib/schela/mail/vmailbox /var/lib/schela/mail/vmailbox.db /var/lib/schela/mail/vdomains 2>/dev/null || true
+  postmap /var/lib/schela/mail/senders 2>/dev/null || true
+  chown root:root /var/lib/schela/mail/vmailbox /var/lib/schela/mail/vmailbox.db /var/lib/schela/mail/vdomains \
+    /var/lib/schela/mail/senders /var/lib/schela/mail/senders.db 2>/dev/null || true
+  chmod 644 /var/lib/schela/mail/vmailbox /var/lib/schela/mail/vmailbox.db /var/lib/schela/mail/vdomains \
+    /var/lib/schela/mail/senders /var/lib/schela/mail/senders.db 2>/dev/null || true
   postconf -e "virtual_mailbox_base = /var/mail/schela"
   postconf -e "virtual_mailbox_maps = hash:/var/lib/schela/mail/vmailbox"
   postconf -e "virtual_mailbox_domains = /var/lib/schela/mail/vdomains"
   postconf -e "virtual_minimum_uid = 100"
   postconf -e "virtual_uid_maps = static:${vuid}"
   postconf -e "virtual_gid_maps = static:${vgid}"
+  # Port 25 offers STARTTLS but does not require it (other servers may not
+  # speak TLS) and never offers AUTH: clients authenticate on 587.
+  have_cert=0
+  if [ -s "$MAIL_TLS_CERT" ] && [ -s "$MAIL_TLS_KEY" ]; then
+    have_cert=1
+    postconf -e "smtpd_tls_cert_file = ${MAIL_TLS_CERT}"
+    postconf -e "smtpd_tls_key_file = ${MAIL_TLS_KEY}"
+  else
+    log "warning: ${MAIL_TLS_CERT} or ${MAIL_TLS_KEY} missing: mail keeps its previous TLS certificate; IMAP and submission still refuse passwords without TLS"
+  fi
+  postconf -e "smtpd_tls_security_level = may"
+  postconf -e "smtpd_sasl_auth_enable = no"
+  mail_submission
   if [ -d /etc/dovecot/conf.d ]; then
+    # Without the hostname certificate Dovecot keeps the distro one.
+    dove_ssl=""
+    if [ "$have_cert" -eq 1 ] && [ "$dove24" -eq 1 ]; then
+      dove_ssl="ssl_server_cert_file = ${MAIL_TLS_CERT}
+ssl_server_key_file = ${MAIL_TLS_KEY}
+"
+    elif [ "$have_cert" -eq 1 ]; then
+      dove_ssl="ssl_cert = <${MAIL_TLS_CERT}
+ssl_key = <${MAIL_TLS_KEY}
+"
+    fi
     if [ "$dove24" -eq 1 ]; then
       cat >/etc/dovecot/conf.d/99-schela.conf <<DOVE
 # Managed by schela-apply (Dovecot 2.4)
@@ -703,7 +759,10 @@ mail_inbox_path =
 mail_uid = vmail
 mail_gid = vmail
 first_valid_uid = ${vuid}
-auth_allow_cleartext = yes
+# Passwords only over TLS, or from this host to itself (Dovecot treats a
+# connection whose remote IP equals its local IP as secured).
+ssl = required
+${dove_ssl}auth_allow_cleartext = no
 auth_mechanisms = plain login
 passdb passwd-file {
   passwd_file_path = /var/lib/schela/mail/users
@@ -713,10 +772,21 @@ userdb passwd-file {
 }
 service auth {
   user = root
+  unix_listener /var/spool/postfix/private/auth {
+    mode = 0660
+    user = postfix
+    group = postfix
+  }
 }
+# 143 stays on loopback for the webmail; mail clients use 993.
 service imap-login {
   inet_listener imap {
+    listen = 127.0.0.1
     port = 143
+  }
+  inet_listener imaps {
+    port = 993
+    ssl = yes
   }
 }
 DOVE
@@ -736,14 +806,28 @@ userdb {
   driver = passwd-file
   args = username_format=%u /var/lib/schela/mail/users
 }
-disable_plaintext_auth = no
+# Passwords only over TLS, or from this host to itself (Dovecot treats a
+# connection whose remote IP equals its local IP as secured).
+ssl = required
+${dove_ssl}disable_plaintext_auth = yes
 auth_mechanisms = plain login
 service auth {
   user = root
+  unix_listener /var/spool/postfix/private/auth {
+    mode = 0660
+    user = postfix
+    group = postfix
+  }
 }
+# 143 stays on loopback for the webmail; mail clients use 993.
 service imap-login {
   inet_listener imap {
+    address = 127.0.0.1
     port = 143
+  }
+  inet_listener imaps {
+    port = 993
+    ssl = yes
   }
 }
 DOVE

@@ -20,6 +20,7 @@ for base in "${bases[@]}"; do
     continue
   fi
   docker run --rm "$tag" || failed+=("$base")
+  bash installer/test/mail-remote.sh "$tag" || failed+=("$base (mail remote)")
   if [ "${SCHELA_TEST_NETWORK:-1}" = "1" ]; then
     docker run --rm -v "$ROOT/installer:/opt/schela/installer:ro" "$base" \
       bash /opt/schela/installer/test/packages.sh || failed+=("$base (packages)")
