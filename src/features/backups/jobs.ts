@@ -1,4 +1,5 @@
 import type { Sql } from "@/server/db";
+import { removeBackupSecrets } from "./secrets";
 
 // The backup jobs of one site or app. They have nothing to archive once it is
 // gone, so they are listed before it is deleted and removed with it.
@@ -17,5 +18,11 @@ export async function backupJobsOf(sql: Sql, owner: BackupOwner): Promise<{ id: 
 export async function deleteBackupJobs(sql: Sql, ids: readonly number[]): Promise<void> {
   for (const id of ids) {
     await sql`delete from backup_jobs where id = ${id}`;
+  }
+  // Their S3 secrets and SSH keys go with them.
+  try {
+    await removeBackupSecrets(null, ids);
+  } catch (err) {
+    console.error("[schela] backup keys not removed:", err);
   }
 }

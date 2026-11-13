@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Schela backups: tar locally, then push the same archive with rsync and/or S3.
 
-JSON on stdout. Reads jobs from /var/lib/schela/state.json (or stdin for tests).
+JSON on stdout. Reads jobs from /var/lib/schela/state.json. The S3 secret key
+and the SSH private key of a job are not in the state: they sit in root-only
+files under /var/lib/schela/backup-keys, written by schela-backup-keys, and the
+state only says that they are set.
 """
 from __future__ import annotations
 
@@ -12,6 +15,7 @@ import http.client
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 import tarfile
@@ -20,6 +24,12 @@ from urllib.parse import quote
 STATE = os.environ.get("SCHELA_STATE", "/var/lib/schela/state.json")
 ROOT = os.environ.get("SCHELA_BACKUP_ROOT", "/var/lib/schela/backups")
 HISTORY = os.path.join(ROOT, "history.jsonl")
+# Under sudo the caller never chooses where the secrets are read from.
+KEYS = os.path.normpath(
+    "/var/lib/schela/backup-keys"
+    if "SUDO_USER" in os.environ
+    else os.environ.get("SCHELA_BACKUP_KEYS", "/var/lib/schela/backup-keys")
+)
 
 
 def fail(msg: str, code: int = 1) -> None:
@@ -139,6 +149,40 @@ def prune(dir_path: str, retain: int) -> None:
             pass
 
 
+def key_file(job: dict, kind: str, ref_field: str) -> str:
+    """Path of the job's secret, when the state says one is set.
+
+    The name is derived from the job id, never taken from the state; the
+    store and the file must be root's (the store's parent is the panel's).
+    """
+    ref = str(job.get(ref_field) or "")
+    if not ref:
+        return ""
+    name = f"job-{int(job.get('id') or 0)}.{kind}"
+    if ref != name:
+        raise ValueError(f"unexpected {kind} key reference")
+    try:
+        st = os.lstat(KEYS)
+    except FileNotFoundError:
+        st = None
+    if st is None or not stat.S_ISDIR(st.st_mode) or st.st_uid != 0 or st.st_mode & 0o077:
+        raise ValueError(f"{KEYS} is missing or not root-only")
+    path = os.path.join(KEYS, name)
+    try:
+        st = os.lstat(path)
+    except FileNotFoundError as exc:
+        raise ValueError(f"the {kind} key is missing: save it again in the panel") from exc
+    if not stat.S_ISREG(st.st_mode) or st.st_uid != 0 or st.st_mode & 0o077:
+        raise ValueError(f"the {kind} key file is not root-only")
+    return path
+
+
+def read_secret(path: str) -> str:
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    with os.fdopen(fd, encoding="utf-8") as fh:
+        return fh.read().strip()
+
+
 def run_rsync(archive: str, dest: str, ssh_key: str) -> str:
     if re.search(r"[\n\r;|&$`]", dest) or " " in dest:
         raise ValueError("unsafe rsync destination")
@@ -180,7 +224,8 @@ def s3_put(archive: str, job: dict) -> str:
     prefix = str(job.get("s3Prefix") or "schela/")
     region = str(job.get("s3Region") or "us-east-1")
     access = str(job.get("s3AccessKey") or "")
-    secret = str(job.get("s3SecretKey") or "")
+    secret_path = key_file(job, "s3", "s3Secret")
+    secret = read_secret(secret_path) if secret_path else ""
     endpoint = str(job.get("s3Endpoint") or "").strip()
     if not bucket or not access or not secret:
         raise ValueError("S3 bucket and keys are required")
@@ -293,7 +338,7 @@ def run_job(state: dict, job: dict) -> dict:
     if local_ok and rsync_on:
         try:
             notes.append(
-                run_rsync(archive, str(job.get("rsyncDest") or ""), str(job.get("rsyncSshKey") or ""))
+                run_rsync(archive, str(job.get("rsyncDest") or ""), key_file(job, "ssh", "rsyncKey"))
             )
             rsync_ok = True
         except Exception as exc:

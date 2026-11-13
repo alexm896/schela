@@ -11,7 +11,7 @@ echo "== sudo rules"
 command -v sudo >/dev/null || { echo "skip sudo (not installed)"; exit 0; }
 id -u schela >/dev/null 2>&1 || useradd --system --home /var/lib/schela --shell /usr/sbin/nologin schela
 
-stubs=(schela-apply schela schela-files schela-workers schela-backup schela-db schela-purge schela-search)
+stubs=(schela-apply schela schela-files schela-workers schela-backup schela-db schela-purge schela-search schela-backup-keys)
 for b in "${stubs[@]}"; do
   [ ! -e "/usr/local/sbin/$b" ] || mv "/usr/local/sbin/$b" "/usr/local/sbin/$b.keep"
   printf '#!/bin/sh\necho RAN\n' >"/usr/local/sbin/$b"
@@ -45,6 +45,8 @@ cases=(
   "deny|/usr/local/sbin/schela-purge x"
   "allow|/usr/local/sbin/schela-search"
   "deny|/usr/local/sbin/schela-search info"
+  "allow|/usr/local/sbin/schela-backup-keys"
+  "deny|/usr/local/sbin/schela-backup-keys set"
   "deny|/bin/id"
 )
 

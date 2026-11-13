@@ -36,6 +36,19 @@ log()  {
 die()  { printf 'schela: %s\n' "$*" >&2; exit 1; }
 have() { command -v "$1" >/dev/null 2>&1; }
 
+# The first admin password lives here (tmpfs, root only) from the moment it is
+# made until the end of the install shows it, once. It is never kept on disk:
+# the panel deletes bootstrap-admin.json as soon as the admin exists.
+SCHELA_ADMIN_ONCE="${SCHELA_ADMIN_ONCE:-/run/schela-install.password}"
+show_admin_password() {
+  [ -s "$SCHELA_ADMIN_ONCE" ] || return 0
+  printf '   Username admin\n'
+  printf '   Password %s\n\n' "$(cat "$SCHELA_ADMIN_ONCE")"
+  printf '   Shown once and not saved anywhere.\n'
+  printf '   Lost it? sudo schela reset-admin-password\n\n'
+  rm -f "$SCHELA_ADMIN_ONCE"
+}
+
 [ "$(id -u)" -eq 0 ] || die "Run as root (sudo bash install.sh)."
 [ -f /etc/os-release ] || die "Need /etc/os-release."
 # shellcheck disable=SC1091
@@ -88,19 +101,14 @@ if [ "${SCHELA_INNER:-0}" != "1" ] && [ "${SCHELA_VERBOSE:-0}" != "1" ]; then
   if [ "$code" -ne 0 ]; then
     printf '   Install failed.\n   Log: %s\n\n' "$SCHELA_LOG"
     tail -n 12 "$SCHELA_LOG" | sed 's/^/   /'
+    printf '\n'
+    # The admin may already exist with it: a re-run does not make a new one.
+    show_admin_password
     exit "$code"
   fi
-  if [ -f /var/lib/schela/credentials ]; then
-    # shellcheck disable=SC1091
-    . /var/lib/schela/credentials
-    printf '   Schela is ready.\n\n'
-    printf '   URL      %s\n' "${url:-http://server/}"
-    printf '   Username %s\n' "${user:-${email:-admin}}"
-    printf '   Password %s\n\n' "${password:-}"
-    printf '   Saved at /var/lib/schela/credentials  (root only)\n\n'
-  else
-    printf '   Installed. Open http://%s/\n\n' "$(hostname -I | awk '{print $1}')"
-  fi
+  printf '   Schela is ready.\n\n'
+  printf '   URL      http://%s/\n' "$(hostname -I 2>/dev/null | awk '{print $1}')"
+  show_admin_password
   exit 0
 fi
 
@@ -174,6 +182,9 @@ id -u vmail >/dev/null 2>&1 || useradd --system --home /var/mail/schela --shell 
 install -d -m 0750 -o schela -g schela /var/lib/schela /var/lib/schela/pglite /var/lib/schela/apps /var/lib/schela/logs
 # Written by schela-apply as root and read by postfix, never by the panel.
 install -d -m 0755 -o root -g root /var/lib/schela/mail
+# Backup secrets: schela-backup-keys creates it root only (0700) and refuses it
+# when it is not. Only a link left in its place is cleared here.
+[ ! -L /var/lib/schela/backup-keys ] || rm -f /var/lib/schela/backup-keys
 install -d -m 0755 /opt/schela /etc/nginx/schela.d /etc/nginx/schela-apps.d
 install -d -m 0750 -o vmail -g vmail /var/mail/schela
 
@@ -189,7 +200,6 @@ rm -rf /etc/nginx/keel.d /etc/nginx/keel-apps.d
 systemctl daemon-reload >/dev/null 2>&1 || true
 
 ADMIN_EMAIL="admin@schela.local"
-ADMIN_PASS="$(openssl rand -hex 8)"
 umask 077
 if [ ! -f /var/lib/schela/auth.secret ]; then
   openssl rand -hex 32 > /var/lib/schela/auth.secret
@@ -197,24 +207,30 @@ if [ ! -f /var/lib/schela/auth.secret ]; then
   chmod 600 /var/lib/schela/auth.secret
 fi
 AUTH_SECRET="$(tr -d '[:space:]' </var/lib/schela/auth.secret)"
-if [ ! -f /var/lib/schela/credentials ]; then
-  cat > /var/lib/schela/bootstrap-admin.json <<JSON
-{"email":"${ADMIN_EMAIL}","password":"${ADMIN_PASS}","name":"Admin"}
-JSON
+# The panel's auth settings. Never the admin password.
+if [ ! -f /var/lib/schela/admin.env ]; then
   cat > /var/lib/schela/admin.env <<ENV
-SCHELA_ADMIN_EMAIL=${ADMIN_EMAIL}
-SCHELA_ADMIN_PASSWORD=${ADMIN_PASS}
 BETTER_AUTH_SECRET=${AUTH_SECRET}
 BETTER_AUTH_URL=http://127.0.0.1
 ENV
-  cat > /var/lib/schela/credentials <<ENV
-url=http://__IP__/
-user=admin
-password=${ADMIN_PASS}
-ENV
+fi
+# The panel creates the admin from bootstrap-admin.json on its first request
+# and deletes the file. A panel database (or the credentials file of older
+# installs) means the admin was bootstrapped already: a re-run never makes a
+# new password. `schela reset-admin-password` sets one.
+if [ -f /var/lib/schela/bootstrap-admin.json ]; then
+  # An earlier run stopped before the panel created the admin: show it again.
+  jq -r '.password // empty' /var/lib/schela/bootstrap-admin.json >"$SCHELA_ADMIN_ONCE"
+elif [ ! -e /var/lib/schela/pglite/PG_VERSION ] && [ ! -e /var/lib/schela/credentials ]; then
+  ADMIN_PASS="$(openssl rand -hex 8)"
+  cat > /var/lib/schela/bootstrap-admin.json <<JSON
+{"email":"${ADMIN_EMAIL}","password":"${ADMIN_PASS}","name":"Admin"}
+JSON
+  printf '%s\n' "$ADMIN_PASS" >"$SCHELA_ADMIN_ONCE"
+  unset ADMIN_PASS
 fi
 chown schela:schela /var/lib/schela/bootstrap-admin.json /var/lib/schela/admin.env 2>/dev/null || true
-chmod 600 /var/lib/schela/bootstrap-admin.json /var/lib/schela/admin.env /var/lib/schela/credentials 2>/dev/null || true
+chmod 600 /var/lib/schela/bootstrap-admin.json /var/lib/schela/admin.env 2>/dev/null || true
 
 log "Copy panel to /opt/schela"
 rsync -a --delete \
@@ -229,6 +245,7 @@ install -m 0755 "$HERE/schela-workers" /usr/local/sbin/schela-workers
 install -m 0755 "$HERE/schela-db" /usr/local/sbin/schela-db
 install -m 0755 "$HERE/schela-purge" /usr/local/sbin/schela-purge
 install -m 0755 "$HERE/schela-search" /usr/local/sbin/schela-search
+install -m 0755 "$HERE/schela-backup-keys" /usr/local/sbin/schela-backup-keys
 install -m 0644 "$HERE/templates/sudoers" /etc/sudoers.d/schela
 chmod 0440 /etc/sudoers.d/schela
 visudo -cf /etc/sudoers.d/schela >/dev/null
@@ -271,10 +288,11 @@ if [ -d /opt/schela/.output/server ]; then
   fi
 fi
 # The panel owns its data. mail, dkim and db are root's (schela-apply):
-# postfix and opendkim read them, and dkim and db hold secrets.
+# postfix and opendkim read them, and dkim and db hold secrets. So does
+# backup-keys (schela-backup-keys).
 chown schela:schela /var/lib/schela
 find /var/lib/schela -mindepth 1 -maxdepth 1 \
-  ! -name mail ! -name dkim ! -name db \
+  ! -name mail ! -name dkim ! -name db ! -name backup-keys \
   -exec chown -R schela:schela {} +
 chown -R schela:schela /opt/schela
 
@@ -344,10 +362,6 @@ JSON
   chown schela:schela /var/lib/schela/state.json
 fi
 
-IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
-if [ -f /var/lib/schela/credentials ]; then
-  sed -i "s|url=http://__IP__/|url=http://${IP:-127.0.0.1}/|" /var/lib/schela/credentials
-fi
 # Last step: always take port 80 from the distro welcome page and reload nginx.
 log "Activate panel on port 80"
 /usr/local/sbin/schela fix
@@ -359,4 +373,15 @@ if ! systemctl is-active --quiet schela-panel; then
 fi
 # First request creates the admin from bootstrap-admin.json
 curl -sf -o /dev/null --max-time 8 "http://127.0.0.1:${PANEL_PORT}/login" || true
+# The panel deletes bootstrap-admin.json once an admin exists. Older installs
+# kept the password in credentials and admin.env: drop it now.
+if [ ! -e /var/lib/schela/bootstrap-admin.json ]; then
+  rm -f /var/lib/schela/credentials
+  if grep -q '^SCHELA_ADMIN_PASSWORD=' /var/lib/schela/admin.env 2>/dev/null; then
+    sed -i '/^SCHELA_ADMIN_PASSWORD=/d' /var/lib/schela/admin.env
+    chown schela:schela /var/lib/schela/admin.env
+  fi
+fi
 log "Schela is installed."
+# Without the progress screen (SCHELA_VERBOSE=1) this is the end of the output.
+[ "${SCHELA_VERBOSE:-0}" != "1" ] || show_admin_password

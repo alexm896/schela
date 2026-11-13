@@ -14,7 +14,7 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "node --test 'scripts/**/*.test.mjs' && node --experimental-strip-types --test 'src/**/*.test.ts'",
-    "test:auth": "node scripts/auth-smoke.mjs",
+    "test:auth": "node scripts/auth-smoke.mjs && node scripts/backup-secrets-smoke.mjs",
     "lint": "eslint .",
     "format": "prettier --write ."
   },

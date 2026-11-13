@@ -2,24 +2,35 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { bootstrapAdminIfNeeded } from "@/auth/bootstrap-admin";
 import { authMiddleware } from "@/auth/middleware";
+import { hasLegacyBackupSecrets } from "@/features/backups/secrets";
 import { seedBaseFirewall } from "@/features/firewall/defaults";
 import { readModules, seedModules } from "@/features/modules/modules";
 import { logActivity } from "@/server/activity";
 import { applyAfterChange } from "@/server/apply";
 import { getSql } from "@/server/db";
+import { isVpsApply } from "@/server/env";
 import { ensureSetup, readSettings } from "./settings";
 import type { PanelState } from "./types";
 
 /**
  * The only panel data shown before sign-in: the hostname on the login page.
  * Also runs first-boot setup and creates the bootstrap admin, which must
- * happen before anyone can sign in.
+ * happen before anyone can sign in. The installer requests this page after
+ * every install or update, so it also moves backup secrets an older panel kept
+ * in its database into root-only key files (the apply does it).
  */
 export const getLoginInfo = createServerFn({ method: "GET" }).handler(
   async (): Promise<{ hostname: string }> => {
     const sql = await getSql();
     await ensureSetup(sql);
     await bootstrapAdminIfNeeded();
+    if (isVpsApply()) {
+      try {
+        if (await hasLegacyBackupSecrets(sql)) await applyAfterChange(sql);
+      } catch (err) {
+        console.error("[schela] backup secrets not moved yet:", err);
+      }
+    }
     const settings = await readSettings(sql);
     return { hostname: settings.hostname };
   },

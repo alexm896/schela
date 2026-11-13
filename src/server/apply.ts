@@ -1,5 +1,6 @@
 import { mapApp } from "@/features/apps/map";
-import { mapBackupJob } from "@/features/backups/map";
+import { backupStateEntry } from "@/features/backups/map";
+import { moveLegacyBackupSecrets } from "@/features/backups/secrets";
 import { cronUser } from "@/features/cron/cron";
 import { DATABASE_ENGINE_KEYS, isAccessLevel, type DatabaseEngine } from "@/features/databases/databases";
 import { mapRecord, mapZone } from "@/features/dns/map";
@@ -61,6 +62,8 @@ async function databaseState(sql: Sql): Promise<Record<DatabaseEngine, DatabaseE
 export async function dumpAndApply(sql: Sql): Promise<void> {
   if (typeof window !== "undefined") return;
   if (!isVpsApply()) return;
+  // Before the state is written, so it never carries a backup secret.
+  await moveLegacyBackupSecrets(sql);
 
   const settingsRows = await sql<Record<string, unknown>>`
     select * from panel_settings where id = 1
@@ -197,30 +200,7 @@ export async function dumpAndApply(sql: Sql): Promise<void> {
       quotaMb: Number(box.quota_mb) || 2048,
       passwordHash: String(box.password_hash || ""),
     })),
-    backups: backupRows.map((row) => {
-      const job = mapBackupJob(row);
-      return {
-        id: job.id,
-        name: job.name,
-        scope: job.scope,
-        targetId: job.targetId,
-        targetDomain: String(row.target_label || ""),
-        includeMail: job.includeMail,
-        schedule: job.schedule,
-        retain: job.retain,
-        enabled: job.enabled,
-        rsyncEnabled: job.rsyncEnabled,
-        rsyncDest: job.rsyncDest,
-        rsyncSshKey: job.rsyncSshKey,
-        s3Enabled: job.s3Enabled,
-        s3Bucket: job.s3Bucket,
-        s3Prefix: job.s3Prefix,
-        s3Region: job.s3Region,
-        s3AccessKey: job.s3AccessKey,
-        s3SecretKey: String(row.s3_secret_key || ""),
-        s3Endpoint: job.s3Endpoint,
-      };
-    }),
+    backups: backupRows.map(backupStateEntry),
     cron: cronRows
       .filter((row) => row.enabled === true || row.enabled === "t" || row.enabled === 1)
       .map((row) => {
