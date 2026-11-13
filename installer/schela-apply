@@ -359,7 +359,8 @@ apply_apps() {
         fi
       fi
 
-      cat >"$SYSTEMD_DIR/${unit}.service" <<UNIT
+      unit_file="$SYSTEMD_DIR/${unit}.service"
+      content="$(cat <<UNIT
 [Unit]
 Description=Schela Node app ${name}
 After=network.target
@@ -373,13 +374,43 @@ Environment=PORT=${port}
 ExecStart=${NODE_BIN} /home/${user}/app/${entry}
 Restart=on-failure
 RestartSec=3
-NoNewPrivileges=true
-PrivateTmp=true
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=tmpfs
+BindPaths=/home/${user}
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+# AF_NETLINK on top of the workers' set: Node's os.networkInterfaces() reads
+# the interface list over netlink and throws without it.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 [Install]
 WantedBy=multi-user.target
 UNIT
+)"
+      changed=0
+      if [ ! -f "$unit_file" ] || [ "$(cat "$unit_file")" != "$content" ]; then
+        write_file "$unit_file" "$content"
+        changed=1
+      fi
       systemctl daemon-reload
       if [ "$status" = "running" ]; then
+        # A running app keeps its old unit until it restarts; restart it so a
+        # changed unit (for example new sandboxing) takes effect now.
+        if [ "$changed" -eq 1 ] && systemctl is-active --quiet "$unit"; then
+          systemctl restart "$unit" || true
+        fi
         systemctl enable --now "$unit" || true
       else
         systemctl disable --now "$unit" >/dev/null 2>&1 || true
@@ -416,6 +447,117 @@ UNIT
   if [ "$removed" -eq 1 ]; then
     systemctl daemon-reload
   fi
+}
+
+# --- fail2ban ----------------------------------------------------------------
+F2B_JAIL="/etc/fail2ban/jail.d/schela.conf"
+F2B_FILTER="/etc/fail2ban/filter.d/schela-panel.conf"
+# One action for every jail. Its bans sit in fail2ban's own nftables table
+# (inet f2b-table, hooked before the filter chains), which no ufw command
+# touches: ufw reset, reload, enable and rule changes leave them in place. The
+# ufw action would store bans as ufw rules, which ufw rule convergence deletes.
+F2B_BANACTION="nftables[type=multiport]"
+
+# Ports sshd answers on. Schela does not configure sshd, so besides the panel
+# setting take whatever sshd, or the systemd socket that starts it, listens
+# on right now.
+f2b_ssh_ports() {
+  local s p
+  {
+    jq -r '.settings.sshPort // empty' "$STATE"
+    if command -v ss >/dev/null 2>&1; then
+      ss -Hltnp 2>/dev/null | awk '/users:\(\("sshd",/ {print $4}' | sed 's/.*://'
+    fi
+    for s in ssh.socket sshd.socket; do
+      systemctl is-active --quiet "$s" 2>/dev/null || continue
+      systemctl show -p Listen --value "$s" 2>/dev/null | tr ' ' '\n' | sed -n 's/.*:\([0-9][0-9]*\)$/\1/p'
+    done
+  } | while IFS= read -r p; do
+    if ok_port "$p"; then echo "$p"; fi
+  done | sort -n -u | paste -sd, -
+}
+
+apply_fail2ban() {
+  command -v fail2ban-client >/dev/null 2>&1 || return 0
+  [ -d "${F2B_JAIL%/*}" ] && [ -d "${F2B_FILTER%/*}" ] || return 0
+  local ports jail filter old_jail="" old_filter="" had_jail=0 had_filter=0
+  ports="$(f2b_ssh_ports)"
+  [ -n "$ports" ] || ports="ssh"
+
+  # backend = systemd everywhere: Debian 12 and 13 have no /var/log/auth.log
+  # or mail.log by default, and on every supported system sshd, Postfix,
+  # Dovecot and the panel all log to the journal. Ban time, find time and
+  # retries are fail2ban's defaults from jail.conf.
+  jail="# Managed by schela-apply: rewritten on every apply. Put local changes in
+# /etc/fail2ban/jail.local, which fail2ban reads after this file.
+
+[sshd]
+enabled = true
+port = ${ports}
+backend = systemd
+# Ubuntu names the unit ssh.service; OpenSSH 9.8 and later log failed logins
+# from sshd-session.
+journalmatch = _SYSTEMD_UNIT=ssh.service + _SYSTEMD_UNIT=sshd.service + _COMM=sshd + _COMM=sshd-session
+banaction = ${F2B_BANACTION}
+
+[schela-panel]
+enabled = true
+filter = schela-panel
+port = http,https
+backend = systemd
+banaction = ${F2B_BANACTION}"
+  if mod_on mail; then
+    jail+="
+
+[postfix]
+enabled = true
+# Rejections, SASL failures and dropped connections.
+mode = aggressive
+backend = systemd
+# Postfix on Ubuntu 22.04/24.04 and Debian 12 runs as postfix@-.service, which
+# the stock filter on those releases does not match.
+journalmatch = _SYSTEMD_UNIT=postfix.service + _SYSTEMD_UNIT=postfix@-.service
+banaction = ${F2B_BANACTION}
+
+[dovecot]
+enabled = true
+backend = systemd
+banaction = ${F2B_BANACTION}"
+  fi
+
+  filter="# Managed by schela-apply. Failed panel sign-ins, which the panel prints to
+# stdout and systemd stores in the journal of schela-panel.service.
+
+[INCLUDES]
+before = common.conf
+
+[Definition]
+# <ADDR> takes an IP address only, never a host name to resolve.
+failregex = ^%(__prefix_line)sschela-auth: failed sign-in from <ADDR>\$
+ignoreregex =
+
+[Init]
+journalmatch = _SYSTEMD_UNIT=schela-panel.service"
+
+  if [ -f "$F2B_JAIL" ]; then had_jail=1; old_jail="$(cat "$F2B_JAIL")"; fi
+  if [ -f "$F2B_FILTER" ]; then had_filter=1; old_filter="$(cat "$F2B_FILTER")"; fi
+  if [ "$had_jail" -eq 1 ] && [ "$old_jail" = "$jail" ] \
+    && [ "$had_filter" -eq 1 ] && [ "$old_filter" = "$filter" ]; then
+    return 0
+  fi
+  write_file "$F2B_FILTER" "$filter"
+  write_file "$F2B_JAIL" "$jail"
+  [ "$DRY" -eq 0 ] || return 0
+
+  if ! fail2ban-client -t >/dev/null 2>&1; then
+    # Never leave fail2ban with a configuration it refuses to load.
+    if [ "$had_jail" -eq 1 ]; then write_file "$F2B_JAIL" "$old_jail"; else rm -f "$F2B_JAIL"; fi
+    if [ "$had_filter" -eq 1 ]; then write_file "$F2B_FILTER" "$old_filter"; else rm -f "$F2B_FILTER"; fi
+    log "fail2ban: configuration test failed, kept the previous jails"
+    return 0
+  fi
+  log "fail2ban: jails sshd (port ${ports}), schela-panel$(mod_on mail && printf ', postfix, dovecot')"
+  systemctl reload-or-restart fail2ban || log "fail2ban: reload failed"
 }
 
 # --- site workers (queues, Horizon, scheduler) ------------------------------
@@ -2096,6 +2238,7 @@ apply_mariadb
 apply_postgresql
 apply_search meilisearch
 apply_search typesense
+apply_fail2ban
 
 if [ "$DRY" -eq 0 ]; then
   mkdir -p "$ACME_ROOT/.well-known/acme-challenge"

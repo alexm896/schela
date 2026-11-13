@@ -349,6 +349,11 @@ printf '// Managed by Schela: the panel setting "Unattended upgrades".\nAPT::Per
   "$AUTO_UPGRADES" "$AUTO_UPGRADES" >/etc/apt/apt.conf.d/20auto-upgrades
 
 log "Fail2ban"
+# schela-apply writes the jails. They read the journal, which needs
+# python3-systemd, and ban through nftables, which needs nft. On Ubuntu 22.04
+# and Debian 12 the fail2ban package only recommends python3-systemd, and it
+# recommends nftables everywhere.
+apt-get install -y --no-install-recommends python3-systemd nftables
 systemctl enable --now fail2ban
 
 # Empty initial state so apply is a no-op until the wizard runs
