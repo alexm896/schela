@@ -72,11 +72,6 @@ function vpsPublicOrigins(): string[] {
 }
 
 const vpsOrigins = vpsPublicOrigins();
-const vpsMode = env("SCHELA_VPS") === "1" || env("SCHELA_APPLY") === "1";
-const explicitHttps = (explicitBaseURL ?? "").startsWith("https:");
-// `__Host-` + Secure cookies only work on HTTPS or localhost. A VPS opened at
-// http://1.2.3.4 must use a normal cookie or the browser drops the session.
-const vpsHttpCookies = vpsMode && !explicitHttps;
 
 const extraHosts = [env("SCHELA_PUBLIC_IP"), env("SCHELA_HOSTNAME")].filter((h): h is string =>
   Boolean(h),
@@ -127,31 +122,25 @@ export const auth = betterAuth({
     },
   },
 
-  // On HTTPS use `__Host-` cookies: the browser refuses a same-named cookie with
-  // a `Domain` attribute, so a sibling subdomain cannot plant a session. Better
-  // Auth would otherwise use `__Secure-` (which permits Domain), so its prefix
-  // is turned off and Secure + the names are set here.
+  // On a server the panel is reached over HTTPS only (nginx redirects port
+  // 80), so cookies are always Secure, whatever BETTER_AUTH_URL says; local dev
+  // on http://localhost used these same cookies before. `__Host-` makes the browser
+  // refuse a same-named cookie with a `Domain` attribute, so a sibling
+  // subdomain cannot plant a session. Better Auth would otherwise use
+  // `__Secure-` (which permits Domain), so its prefix is turned off and Secure
+  // + the names are set here.
   advanced: {
     // Client address for the rate limiter and session rows: the header nginx
     // overwrites with $remote_addr, never the forgeable X-Forwarded-For.
     ipAddress: { ipAddressHeaders: [CLIENT_IP_HEADER] },
     useSecureCookies: false,
-    defaultCookieAttributes: vpsHttpCookies
-      ? { secure: false, sameSite: "lax", path: "/" }
-      : { secure: true, sameSite: "lax", path: "/" },
-    cookies: vpsHttpCookies
-      ? {
-          session_token: { name: "schela.session_token" },
-          session_data: { name: "schela.session_data" },
-          account_data: { name: "schela.account_data" },
-          dont_remember: { name: "schela.dont_remember" },
-        }
-      : {
-          session_token: { name: "__Host-schela.session_token" },
-          session_data: { name: "__Host-schela.session_data" },
-          account_data: { name: "__Host-schela.account_data" },
-          dont_remember: { name: "__Host-schela.dont_remember" },
-        },
+    defaultCookieAttributes: { secure: true, sameSite: "lax", path: "/" },
+    cookies: {
+      session_token: { name: "__Host-schela.session_token" },
+      session_data: { name: "__Host-schela.session_data" },
+      account_data: { name: "__Host-schela.account_data" },
+      dont_remember: { name: "__Host-schela.dont_remember" },
+    },
   },
 
   // Rate limiting: Better Auth's own limiter, on by default when NODE_ENV is

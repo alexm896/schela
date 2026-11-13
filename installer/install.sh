@@ -94,12 +94,12 @@ if [ "${SCHELA_INNER:-0}" != "1" ] && [ "${SCHELA_VERBOSE:-0}" != "1" ]; then
     # shellcheck disable=SC1091
     . /var/lib/schela/credentials
     printf '   Schela is ready.\n\n'
-    printf '   URL      %s\n' "${url:-http://server/}"
+    printf '   URL      %s\n' "$(/usr/local/sbin/schela url)"
     printf '   Username %s\n' "${user:-${email:-admin}}"
     printf '   Password %s\n\n' "${password:-}"
     printf '   Saved at /var/lib/schela/credentials  (root only)\n\n'
   else
-    printf '   Installed. Open http://%s/\n\n' "$(hostname -I | awk '{print $1}')"
+    printf '   Installed. Open %s\n\n' "$(/usr/local/sbin/schela url)"
   fi
   exit 0
 fi
@@ -205,7 +205,7 @@ JSON
 SCHELA_ADMIN_EMAIL=${ADMIN_EMAIL}
 SCHELA_ADMIN_PASSWORD=${ADMIN_PASS}
 BETTER_AUTH_SECRET=${AUTH_SECRET}
-BETTER_AUTH_URL=http://127.0.0.1
+BETTER_AUTH_URL=https://127.0.0.1
 ENV
   cat > /var/lib/schela/credentials <<ENV
 url=http://__IP__/
@@ -270,11 +270,11 @@ if [ -d /opt/schela/.output/server ]; then
     done
   fi
 fi
-# The panel owns its data. mail, dkim and db are root's (schela-apply):
-# postfix and opendkim read them, and dkim and db hold secrets.
+# The panel owns its data. mail, dkim, db and tls are root's (schela-apply):
+# postfix and opendkim read them, and dkim, db and tls hold secrets.
 chown schela:schela /var/lib/schela
 find /var/lib/schela -mindepth 1 -maxdepth 1 \
-  ! -name mail ! -name dkim ! -name db \
+  ! -name mail ! -name dkim ! -name db ! -name tls \
   -exec chown -R schela:schela {} +
 chown -R schela:schela /opt/schela
 
@@ -284,9 +284,9 @@ rm -f /etc/nginx/sites-enabled/default \
       /etc/nginx/sites-enabled/default.conf \
       /etc/nginx/conf.d/default.conf
 find /etc/nginx/sites-enabled -maxdepth 1 -name '*default*' -delete 2>/dev/null || true
-install -m 0644 /usr/local/share/schela/templates/nginx-panel.conf /etc/nginx/sites-available/schela-panel.conf
-sed -i "s/127.0.0.1:9090/127.0.0.1:${PANEL_PORT}/" /etc/nginx/sites-available/schela-panel.conf
-ln -sfn /etc/nginx/sites-available/schela-panel.conf /etc/nginx/sites-enabled/schela-panel.conf
+# The panel vhost itself (443, certificate, redirect from 80) is rendered by
+# `schela-apply --panel` through `schela fix` at the end, once state.json and
+# the panel unit (its port) exist. An existing vhost keeps serving until then.
 printf 'include /etc/nginx/schela.d/*.conf;\ninclude /etc/nginx/schela-apps.d/*.conf;\n' \
   > /etc/nginx/conf.d/schela-includes.conf
 nginx -t
@@ -298,11 +298,15 @@ else
   EXEC="/usr/bin/node /opt/schela/node_modules/vite/bin/vite.js preview --host 127.0.0.1 --port ${PANEL_PORT}"
 fi
 PUBLIC_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
+# The panel is served over https only (schela-apply --panel); the hostname is
+# trusted as well through SCHELA_HOSTNAME in the unit.
 if [ -n "$PUBLIC_IP" ]; then
+  AUTH_HOST="$PUBLIC_IP"
+  case "$AUTH_HOST" in *:*) AUTH_HOST="[$AUTH_HOST]" ;; esac
   if grep -q '^BETTER_AUTH_URL=' /var/lib/schela/admin.env 2>/dev/null; then
-    sed -i "s|^BETTER_AUTH_URL=.*|BETTER_AUTH_URL=http://${PUBLIC_IP}|" /var/lib/schela/admin.env
+    sed -i "s|^BETTER_AUTH_URL=.*|BETTER_AUTH_URL=https://${AUTH_HOST}|" /var/lib/schela/admin.env
   else
-    printf 'BETTER_AUTH_URL=http://%s\n' "$PUBLIC_IP" >> /var/lib/schela/admin.env
+    printf 'BETTER_AUTH_URL=https://%s\n' "$AUTH_HOST" >> /var/lib/schela/admin.env
   fi
 fi
 sed \
@@ -344,13 +348,13 @@ JSON
   chown schela:schela /var/lib/schela/state.json
 fi
 
-IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
-if [ -f /var/lib/schela/credentials ]; then
-  sed -i "s|url=http://__IP__/|url=http://${IP:-127.0.0.1}/|" /var/lib/schela/credentials
-fi
-# Last step: always take port 80 from the distro welcome page and reload nginx.
-log "Activate panel on port 80"
+# Last step: always take port 80 from the distro welcome page, put the panel on
+# https (certificate, vhost) and reload nginx.
+log "Activate panel on https"
 /usr/local/sbin/schela fix
+if [ -f /var/lib/schela/credentials ]; then
+  sed -i "s|^url=.*|url=$(/usr/local/sbin/schela url)|" /var/lib/schela/credentials
+fi
 sleep 2
 if ! systemctl is-active --quiet schela-panel; then
   echo "schela-panel failed to start:"

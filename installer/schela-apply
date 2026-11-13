@@ -8,7 +8,14 @@ TEMPLATES="${SCHELA_TEMPLATES:-/usr/local/share/schela/templates}"
 # existing sites and apps may still run on.
 VERSIONS="${SCHELA_VERSIONS:-/usr/local/share/schela/versions.json}"
 DRY=0
-[ "${1:-}" = "--dry-run" ] && DRY=1
+# --panel: only the panel certificate and vhost (install.sh, schela fix).
+# --renew-hook: run by certbot after a renewal (see install_deploy_hook).
+MODE=apply
+case "${1:-}" in
+  --dry-run) DRY=1 ;;
+  --panel) MODE=panel ;;
+  --renew-hook) MODE=renew-hook ;;
+esac
 
 log() { printf 'schela-apply: %s\n' "$*"; }
 die() { printf 'schela-apply: %s\n' "$*" >&2; exit 1; }
@@ -129,7 +136,9 @@ ensure_home() {
 # One apply at a time. The panel starts one per change, and two at once race
 # on users, unit files and configs. A later apply waits its turn, then applies
 # the newest state.
-if [ "$DRY" -eq 0 ]; then
+# The renewal hook skips the lock: certbot can run it from inside an apply
+# (certonly renewing an existing lineage), which already holds the lock.
+if [ "$DRY" -eq 0 ] && [ "$MODE" != "renew-hook" ]; then
   exec 9>"${SCHELA_APPLY_LOCK:-/run/schela-apply.lock}"
   flock 9
 fi
@@ -1482,11 +1491,32 @@ apply_dns() {
   named-checkconf >/dev/null 2>&1 && systemctl reload bind9 >/dev/null 2>&1 || true
 }
 
+# --- certificates ------------------------------------------------------------
+# nginx answers http-01 challenges from here for every Host on port 80.
+prepare_acme_root() {
+  mkdir -p "$ACME_ROOT/.well-known/acme-challenge"
+  chmod 755 /var/lib/schela "$ACME_ROOT" "$ACME_ROOT/.well-known" "$ACME_ROOT/.well-known/acme-challenge" || true
+}
+
+# certbot webroot issuance for one name. Output goes to the file in $2.
+certbot_webroot() {
+  certbot certonly --webroot -w "$ACME_ROOT" \
+    -d "$1" \
+    --non-interactive --agree-tos \
+    --register-unsafely-without-email \
+    --preferred-challenges http \
+    --keep-until-expiring \
+    >"$2" 2>&1
+}
+
+cert_expires() {
+  openssl x509 -enddate -noout -in "$1" 2>/dev/null | sed 's/notAfter=//' || true
+}
+
 issue_certs() {
   [ "$DRY" -eq 0 ] || return 0
   command -v certbot >/dev/null 2>&1 || { log "certbot missing"; return 0; }
-  mkdir -p "$ACME_ROOT/.well-known/acme-challenge"
-  chmod 755 /var/lib/schela "$ACME_ROOT" "$ACME_ROOT/.well-known" "$ACME_ROOT/.well-known/acme-challenge" || true
+  prepare_acme_root
   echo '{' >"$CERTS_JSON.tmp"
   first=1
   NEW_CERTS=0
@@ -1498,23 +1528,17 @@ issue_certs() {
     if cert_live "$domain"; then
       status="live"
       message="Certificate is active"
-      expires="$(openssl x509 -enddate -noout -in "/etc/letsencrypt/live/${domain}/fullchain.pem" 2>/dev/null | sed 's/notAfter=//' || true)"
+      expires="$(cert_expires "/etc/letsencrypt/live/${domain}/fullchain.pem")"
     else
       out="$(mktemp)"
       set +e
-      certbot certonly --webroot -w "$ACME_ROOT" \
-        -d "$domain" \
-        --non-interactive --agree-tos \
-        --register-unsafely-without-email \
-        --preferred-challenges http \
-        --keep-until-expiring \
-        >"$out" 2>&1
+      certbot_webroot "$domain" "$out"
       rc=$?
       set -e
       if [ "$rc" -eq 0 ] && cert_live "$domain"; then
         status="live"
         message="Certificate issued"
-        expires="$(openssl x509 -enddate -noout -in "/etc/letsencrypt/live/${domain}/fullchain.pem" 2>/dev/null | sed 's/notAfter=//' || true)"
+        expires="$(cert_expires "/etc/letsencrypt/live/${domain}/fullchain.pem")"
         NEW_CERTS=$((NEW_CERTS + 1))
         log "certificate issued for $domain"
       else
@@ -1537,7 +1561,342 @@ issue_certs() {
   chmod 644 "$CERTS_JSON"
 }
 
+# --- panel host certificate --------------------------------------------------
+# /var/lib/schela/tls/host.crt (full chain) and host.key (root only) always
+# hold the certificate for settings.hostname: Let's Encrypt when one is live,
+# else the self-signed one. Dovecot and Postfix read these two paths. The
+# panel by IP always uses the self-signed certificate: Let's Encrypt does not
+# issue for a bare IP with the certbot of any supported system (1.21 to 4.0
+# refuse "Requested name ... is an IP address").
+TLS_DIR="/var/lib/schela/tls"
+PANEL_CONF="/etc/nginx/sites-available/schela-panel.conf"
+DEPLOY_HOOK="/etc/letsencrypt/renewal-hooks/deploy/schela"
+HOST_CERT_KIND="self-signed"
+PANEL_VHOST_CHANGED=0
+PANEL_IPS=()
+
+# settings.hostname, else this machine's name. Never empty.
+panel_hostname() {
+  local h
+  h="$(jq -r '.settings.hostname // empty' "$STATE" 2>/dev/null || true)"
+  h="${h%.}"
+  h="${h,,}"
+  if ok_domain "$h" && ! ok_ipv4 "$h"; then printf '%s' "$h"; return; fi
+  h="$(hostname -f 2>/dev/null || hostname 2>/dev/null || true)"
+  h="${h,,}"
+  if ok_domain "$h" && ! ok_ipv4 "$h"; then printf '%s' "$h"; return; fi
+  printf 'localhost'
+}
+
+# Addresses on this machine's interfaces (no loopback, no link-local).
+panel_ips() {
+  local ip
+  for ip in $(hostname -I 2>/dev/null || true); do
+    if ok_ipv4 "$ip" || [[ "$ip" =~ ^[0-9A-Fa-f:]+$ && "$ip" == *:* ]]; then
+      printf '%s\n' "${ip,,}"
+    fi
+  done | awk '!seen[$0]++'
+}
+
+panel_port() {
+  local p="${SCHELA_PANEL_PORT:-}"
+  [ -n "$p" ] || p="$(sed -n 's/^Environment=PORT=\([0-9]*\)$/\1/p' /etc/systemd/system/schela-panel.service 2>/dev/null | head -n1)"
+  ok_port "$p" || p=9090
+  printf '%s' "$p"
+}
+
+# nginx 1.19.4 added ssl_reject_handshake; Ubuntu 22.04 ships 1.18.
+nginx_reject_handshake() {
+  local v
+  v="$(nginx -v 2>&1 | sed -n 's|.*nginx/\([0-9][0-9.]*\).*|\1|p')"
+  [ -n "$v" ] || return 1
+  [ "$(printf '%s\n1.19.4\n' "$v" | sort -V | head -n1)" = "1.19.4" ]
+}
+
+# The listen lines of a panel server on 443, IPv4 and IPv6.
+panel_listen_443() {
+  local opt="${1:+ $1}" h2=" http2" tail=""
+  if [ "${HTTP2_DIRECTIVE:-0}" -eq 1 ]; then
+    h2=""
+    tail=$';\n    http2 on'
+  fi
+  printf '443 ssl%s%s;\n    listen [::]:443 ssl%s%s%s' "$h2" "$opt" "$h2" "$opt" "$tail"
+}
+
+# The panel user owns /var/lib/schela and could put a link or its own
+# directory at tls; root only writes into a root-owned directory.
+prepare_tls_dir() {
+  if [ -L "$TLS_DIR" ] || { [ -e "$TLS_DIR" ] && [ "$(stat -c %u "$TLS_DIR")" != "0" ]; }; then
+    rm -rf "$TLS_DIR"
+  fi
+  install -d -m 0755 -o root -g root "$TLS_DIR"
+}
+
+# Self-signed certificate for the hostname and every address, renewed when
+# those change or it is 30 days from expiry.
+ensure_self_signed() {
+  local host="$1" san ip tmp
+  shift
+  san="DNS:${host}"
+  for ip in "$@"; do san+=",IP:${ip}"; done
+  if [ -s "$TLS_DIR/self-signed.crt" ] && [ -s "$TLS_DIR/self-signed.key" ] \
+    && [ "$(cat "$TLS_DIR/self-signed.san" 2>/dev/null)" = "$san" ] \
+    && openssl x509 -checkend 2592000 -noout -in "$TLS_DIR/self-signed.crt" >/dev/null 2>&1; then
+    return 0
+  fi
+  tmp="$(mktemp -d "$TLS_DIR/.new.XXXXXX")"
+  if ! openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -subj "/CN=${host}" \
+    -addext "subjectAltName=${san}" -keyout "$tmp/key" -out "$tmp/crt" >/dev/null 2>&1; then
+    rm -rf "$tmp"
+    die "could not create the self-signed certificate for ${san}"
+  fi
+  chmod 600 "$tmp/key"
+  chmod 644 "$tmp/crt"
+  mv -f "$tmp/key" "$TLS_DIR/self-signed.key"
+  mv -f "$tmp/crt" "$TLS_DIR/self-signed.crt"
+  printf '%s\n' "$san" >"$TLS_DIR/self-signed.san"
+  rm -rf "$tmp"
+  log "self-signed certificate for ${san}"
+}
+
+# Copy a certificate and its key to the contract paths (no-op when equal).
+install_host_files() {
+  local crt="$1" key="$2"
+  if cmp -s "$crt" "$TLS_DIR/host.crt" && cmp -s "$key" "$TLS_DIR/host.key"; then
+    return 0
+  fi
+  install -m 0600 -o root -g root "$key" "$TLS_DIR/.host.key.new"
+  install -m 0644 -o root -g root "$crt" "$TLS_DIR/.host.crt.new"
+  mv -f "$TLS_DIR/.host.key.new" "$TLS_DIR/host.key"
+  mv -f "$TLS_DIR/.host.crt.new" "$TLS_DIR/host.crt"
+  log "host certificate: $crt"
+}
+
+le_valid() {
+  cert_live "$1" && openssl x509 -checkend 0 -noout -in "/etc/letsencrypt/live/${1}/fullchain.pem" >/dev/null 2>&1
+}
+
+# Names Let's Encrypt could issue for: a dotted public name and certbot here.
+le_eligible() {
+  command -v certbot >/dev/null 2>&1 || return 1
+  [[ "$1" == *.* ]] || return 1
+  [[ ! "$1" =~ \.(example|local|test|localhost|invalid|internal|lan)$ ]]
+}
+
+# Does the hostname reach this machine? Public DNS only (not /etc/hosts, which
+# often maps it to 127.0.1.1): yes when it resolves to an address of this
+# machine, or, behind NAT, when nginx here answers a token through it.
+host_points_here() {
+  local host="$1" addr token got rc=1
+  local -a addrs=()
+  mapfile -t addrs < <(getent -s dns ahosts "$host" 2>/dev/null | awk '{print tolower($1)}' | sort -u)
+  [ "${#addrs[@]}" -gt 0 ] || return 1
+  for addr in "${addrs[@]}"; do
+    in_list "$addr" "${PANEL_IPS[@]+"${PANEL_IPS[@]}"}" && return 0
+  done
+  command -v curl >/dev/null 2>&1 || return 1
+  token="schela-check-$(openssl rand -hex 16)"
+  printf '%s' "$token" >"$ACME_ROOT/.well-known/acme-challenge/$token"
+  for addr in "${addrs[@]}"; do
+    [[ "$addr" == *:* ]] && addr="[$addr]"
+    got="$(curl -s --max-time 5 --resolve "${host}:80:${addr}" \
+      "http://${host}/.well-known/acme-challenge/${token}" 2>/dev/null || true)"
+    if [ "$got" = "$token" ]; then rc=0; break; fi
+  done
+  rm -f "$ACME_ROOT/.well-known/acme-challenge/$token"
+  return "$rc"
+}
+
+# Write the panel vhost for the current HOST_CERT_KIND. A config nginx refuses
+# is rolled back, so a bad render never replaces a working panel.
+write_panel_vhost() {
+  local host="$1" names ip ip_names="" hsts="" reject conf old="" was_ok=0
+  for ip in "${PANEL_IPS[@]+"${PANEL_IPS[@]}"}"; do
+    if [[ "$ip" == *:* ]]; then ip_names+=" [${ip}]"; else ip_names+=" ${ip}"; fi
+  done
+  ip_names="${ip_names# }"
+  names="${host}${ip_names:+ ${ip_names}}"
+  [ -n "$ip_names" ] || ip_names="_"
+  # HSTS only with a publicly trusted certificate, and only for the hostname:
+  # no includeSubDomains, site domains may be subdomains of it.
+  if [ "$HOST_CERT_KIND" = "letsencrypt" ]; then
+    hsts='    add_header Strict-Transport-Security "max-age=31536000" always;'
+  fi
+  if nginx_reject_handshake; then
+    reject='    ssl_reject_handshake on;'
+  else
+    reject="    ssl_certificate ${TLS_DIR}/self-signed.crt;"$'\n'"    ssl_certificate_key ${TLS_DIR}/self-signed.key;"
+  fi
+  conf="$(render "$TEMPLATES/nginx-panel.conf" \
+    __LISTEN_443_DEFAULT__ "$(panel_listen_443 default_server)" \
+    __LISTEN_443__ "$(panel_listen_443)" \
+    __PANEL_NAMES__ "$names" \
+    __IP_NAMES__ "$ip_names" \
+    __HOSTNAME__ "$host" \
+    __REJECT_TLS__ "$reject" \
+    __HSTS__ "$hsts" \
+    __PANEL_PORT__ "$(panel_port)")"
+  [ -f "$PANEL_CONF" ] && old="$(cat "$PANEL_CONF")"
+  if [ "$old" = "$conf" ] && [ -L /etc/nginx/sites-enabled/schela-panel.conf ]; then
+    return 0
+  fi
+  # The distro welcome page is also default_server on port 80.
+  rm -f /etc/nginx/sites-enabled/default /etc/nginx/sites-enabled/default.conf /etc/nginx/conf.d/default.conf
+  # Only roll back what this render broke: when nginx already fails on
+  # something else, the rest of apply is what repairs it.
+  nginx -t >/dev/null 2>&1 && was_ok=1
+  write_file "$PANEL_CONF" "$conf"
+  ln -sfn "$PANEL_CONF" /etc/nginx/sites-enabled/schela-panel.conf
+  PANEL_VHOST_CHANGED=1
+  if [ "$was_ok" -eq 1 ] && ! nginx -t >/dev/null 2>&1; then
+    nginx -t || true
+    if [ -n "$old" ]; then
+      write_file "$PANEL_CONF" "$old"
+    else
+      rm -f "$PANEL_CONF" /etc/nginx/sites-enabled/schela-panel.conf
+    fi
+    die "nginx refused the panel vhost; kept the previous one"
+  fi
+}
+
+install_deploy_hook() {
+  local body
+  body='#!/bin/sh
+# Installed by schela-apply. certbot runs this after each renewal: it refreshes
+# the panel host certificate and certs.json, then reloads nginx, Dovecot and
+# Postfix.
+exec /usr/local/sbin/schela-apply --renew-hook'
+  mkdir -p "${DEPLOY_HOOK%/*}"
+  if [ "$(cat "$DEPLOY_HOOK" 2>/dev/null)" != "$body" ]; then
+    printf '%s\n' "$body" >"$DEPLOY_HOOK.tmp"
+    chmod 755 "$DEPLOY_HOOK.tmp"
+    mv -f "$DEPLOY_HOOK.tmp" "$DEPLOY_HOOK"
+  fi
+}
+
+reload_nginx_quiet() {
+  nginx -t >/dev/null 2>&1 && systemctl reload nginx >/dev/null 2>&1 || true
+}
+
+ensure_host_cert() {
+  local host url ip certlog rc
+  host="$(panel_hostname)"
+  mapfile -t PANEL_IPS < <(panel_ips)
+  if [ "$DRY" -eq 1 ]; then
+    log "would ensure the host certificate for $host and the panel vhost"
+    return 0
+  fi
+  need openssl
+  prepare_tls_dir
+  prepare_acme_root
+  ensure_self_signed "$host" "${PANEL_IPS[@]+"${PANEL_IPS[@]}"}"
+  HOST_CERT_KIND="self-signed"
+  if le_valid "$host"; then
+    HOST_CERT_KIND="letsencrypt"
+  elif le_eligible "$host"; then
+    # nginx has to answer the challenge for this name on port 80 first.
+    [ -s "$TLS_DIR/host.crt" ] && [ -s "$TLS_DIR/host.key" ] \
+      || install_host_files "$TLS_DIR/self-signed.crt" "$TLS_DIR/self-signed.key"
+    PANEL_VHOST_CHANGED=0
+    write_panel_vhost "$host"
+    [ "$PANEL_VHOST_CHANGED" -eq 0 ] || reload_nginx_quiet
+    if host_points_here "$host"; then
+      certlog="$(mktemp)"
+      set +e
+      certbot_webroot "$host" "$certlog"
+      rc=$?
+      set -e
+      if [ "$rc" -eq 0 ] && le_valid "$host"; then
+        HOST_CERT_KIND="letsencrypt"
+        log "certificate issued for $host"
+      else
+        log "certbot failed for $host, the panel keeps the self-signed certificate"
+        mkdir -p /var/log/schela
+        cp "$certlog" "/var/log/schela/certbot-${host}.log" || true
+      fi
+      rm -f "$certlog"
+    else
+      log "$host does not point here, the panel uses the self-signed certificate"
+    fi
+  fi
+  if [ "$HOST_CERT_KIND" = "letsencrypt" ]; then
+    install_host_files "/etc/letsencrypt/live/${host}/fullchain.pem" "/etc/letsencrypt/live/${host}/privkey.pem"
+    url="https://${host}/"
+  else
+    install_host_files "$TLS_DIR/self-signed.crt" "$TLS_DIR/self-signed.key"
+    ip="${PANEL_IPS[0]:-}"
+    if [ -z "$ip" ]; then
+      url="https://${host}/"
+    elif [[ "$ip" == *:* ]]; then
+      url="https://[${ip}]/"
+    else
+      url="https://${ip}/"
+    fi
+  fi
+  write_file "$TLS_DIR/host.env" "$(printf 'kind=%s\nhostname=%s\nurl=%s' "$HOST_CERT_KIND" "$host" "$url")"
+  write_panel_vhost "$host"
+  install_deploy_hook
+}
+
+# certs.json after a renewal: every name with a live certificate gets its new
+# expiry date.
+refresh_certs_json() {
+  local json d exp tmp
+  [ -f "$CERTS_JSON" ] || return 0
+  json="$(cat "$CERTS_JSON")"
+  jq -e 'type == "object"' <<<"$json" >/dev/null 2>&1 || return 0
+  while IFS= read -r d; do
+    ok_domain "$d" && cert_live "$d" || continue
+    exp="$(cert_expires "/etc/letsencrypt/live/${d}/fullchain.pem")"
+    json="$(jq --arg d "$d" --arg e "$exp" \
+      '.[$d] = {status: "live", message: "Certificate is active", expires: $e}' <<<"$json")"
+  done < <(jq -r 'keys[]' <<<"$json")
+  tmp="$(mktemp "$CERTS_JSON.XXXXXX")"
+  printf '%s\n' "$json" >"$tmp"
+  chmod 644 "$tmp"
+  mv -f "$tmp" "$CERTS_JSON"
+}
+
+# certbot deploy hook: RENEWED_LINEAGE is the live directory just renewed.
+renew_hook() {
+  local host rc=0 unit
+  host="$(panel_hostname)"
+  if [ "${RENEWED_LINEAGE:-}" = "/etc/letsencrypt/live/${host}" ] && cert_live "$host"; then
+    prepare_tls_dir
+    install_host_files "/etc/letsencrypt/live/${host}/fullchain.pem" "/etc/letsencrypt/live/${host}/privkey.pem"
+  fi
+  refresh_certs_json
+  if nginx -t; then
+    systemctl reload nginx || rc=1
+  else
+    log "nginx -t failed, nginx not reloaded"
+    rc=1
+  fi
+  for unit in dovecot postfix; do
+    if systemctl is-active --quiet "$unit"; then
+      systemctl reload "$unit" || rc=1
+    fi
+  done
+  log "renewal of ${RENEWED_LINEAGE:-unknown} deployed"
+  return "$rc"
+}
+
+case "$MODE" in
+  panel)
+    ensure_host_cert
+    nginx -t
+    systemctl reload nginx || systemctl restart nginx
+    log "panel on https with the $HOST_CERT_KIND certificate"
+    exit 0
+    ;;
+  renew-hook)
+    renew_hook || exit 1
+    exit 0
+    ;;
+esac
+
 log "applying $(jq -r '.settings.hostname // "unknown"' "$STATE")"
+ensure_host_cert
 apply_sites
 apply_apps
 apply_workers
