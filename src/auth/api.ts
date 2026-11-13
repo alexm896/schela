@@ -37,11 +37,15 @@ export const getAdminIdentity = createServerFn({ method: "GET" })
   .middleware([authMiddleware])
   .handler(async ({ context }) => {
     const sql = await getSql();
-    const rows = await sql<{ email: string }>`
-      select email from "user" where id = ${context.userId}
+    const rows = await sql<{ email: string; twoFactorEnabled: boolean | null }>`
+      select email, "twoFactorEnabled" from "user" where id = ${context.userId}
     `;
     const email = rows[0]?.email ?? "admin@schela.local";
-    return { username: displayUsername(email), email };
+    return {
+      username: displayUsername(email),
+      email,
+      twoFactorEnabled: rows[0]?.twoFactorEnabled === true,
+    };
   });
 
 export const updateAdminIdentity = createServerFn({ method: "POST" })

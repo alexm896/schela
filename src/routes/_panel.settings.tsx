@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { getPanelState, updateSettings } from "@/features/settings/api";
+import { TwoFactorCard } from "@/features/settings/components/two-factor-card";
 import { getRuntimes } from "@/features/runtimes/api";
 
 export const Route = createFileRoute("/_panel/settings")({
@@ -124,6 +125,8 @@ function SettingsPage() {
             </Button>
           </CardContent>
         </Card>
+
+        <TwoFactorCard enabled={admin.twoFactorEnabled} onChange={() => router.invalidate()} />
 
         <Card>
           <CardHeader>
