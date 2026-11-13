@@ -39,7 +39,7 @@ export const Route = createFileRoute("/_panel/firewall")({
 });
 
 function FirewallPage() {
-  const rules = Route.useLoaderData();
+  const { base, rules } = Route.useLoaderData();
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [action, setAction] = useState<"allow" | "deny">("allow");
@@ -49,7 +49,8 @@ function FirewallPage() {
   const [comment, setComment] = useState("");
   const [busy, setBusy] = useState(false);
   const [removing, setRemoving] = useState<FirewallRule | null>(null);
-  const openCount = rules.filter((r) => r.enabled && r.action === "allow").length;
+  const openCount =
+    base.length + rules.filter((r) => r.enabled && r.action === "allow").length;
 
   async function onCreate() {
     setBusy(true);
@@ -74,7 +75,7 @@ function FirewallPage() {
       <PageHeader
         kicker="Security"
         title="Firewall"
-        description="Inbound traffic is denied by default. Only listed ports answer. Fail2ban watches SSH and the panel."
+        description="Inbound traffic is denied by default. Only listed ports answer. Deny rules are checked before allow rules. Fail2ban watches SSH and the panel."
         action={
           <Button onClick={() => setOpen(true)}>
             <Plus className="size-4" />
@@ -120,6 +121,21 @@ function FirewallPage() {
             </tr>
           </thead>
           <tbody>
+            {base.map((b) => (
+              <tr key={`base-${b.protocol}-${b.port}`} className="border-b border-border">
+                <td className="px-5 py-3">
+                  <Badge variant="ok">allow</Badge>
+                </td>
+                <td className="px-5 py-3 font-mono text-xs">
+                  {b.protocol}/{b.port}
+                </td>
+                <td className="px-5 py-3 font-mono text-xs">any</td>
+                <td className="px-5 py-3 text-muted-foreground">{b.label}</td>
+                <td className="px-5 py-3" colSpan={2}>
+                  <Badge variant="outline">base</Badge>
+                </td>
+              </tr>
+            ))}
             {rules.map((rule) => (
               <tr key={rule.id} className="border-b border-border last:border-0">
                 <td className="px-5 py-3">
@@ -161,7 +177,10 @@ function FirewallPage() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Firewall rule</DialogTitle>
-            <DialogDescription>Inbound only. Default policy stays deny.</DialogDescription>
+            <DialogDescription>
+              Inbound only. Default policy stays deny. A deny wins over every allow for the
+              sources it names. Source: any, an IP address or a range like 203.0.113.0/24.
+            </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4">
             <div className="grid grid-cols-2 gap-3">

@@ -600,35 +600,220 @@ WantedBy=multi-user.target"
 }
 
 # --- firewall --------------------------------------------------------------
-apply_firewall() {
-  command -v ufw >/dev/null 2>&1 || return 0
-  [ "$DRY" -eq 1 ] && { log "would apply ufw rules"; return; }
-  ufw --force enable >/dev/null
-  ufw default deny incoming >/dev/null
-  ufw default allow outgoing >/dev/null
-  # Always keep SSH so we cannot lock ourselves out.
-  ufw allow 22/tcp >/dev/null || true
-  ufw allow 80/tcp >/dev/null || true
-  ufw allow 443/tcp >/dev/null || true
-  while IFS= read -r rule; do
-    [ -n "$rule" ] || continue
-    enabled="$(jq -r '.enabled' <<<"$rule")"
-    action="$(jq -r '.action' <<<"$rule")"
-    proto="$(jq -r '.protocol' <<<"$rule")"
-    port="$(jq -r '.port' <<<"$rule")"
-    source="$(jq -r '.source' <<<"$rule")"
-    [ "$enabled" = "true" ] || continue
-    [ "$action" = "allow" ] || continue
-    ok_port "$port" || continue
-    [[ "$proto" =~ ^(tcp|udp|any)$ ]] || continue
-    spec=""
-    if [ "$proto" = "any" ]; then spec="$port"; else spec="${port}/${proto}"; fi
-    if [ "$source" = "any" ]; then
-      ufw allow "$spec" >/dev/null || true
-    else
-      ufw allow from "$source" to any port "$port" proto "$proto" >/dev/null || true
+# apply_firewall owns the whole ufw ruleset and converges it on every run: SSH,
+# 80/tcp, 443/tcp, the ports of enabled modules and the panel's enabled rules.
+# Every other rule is removed. ufw is first-match, so deny rules sit above all
+# allow rules. Missing rules are added before stale ones are deleted and ufw is
+# never reset or disabled, so SSH stays allowed at every step.
+# The panel lists the same base rules: src/features/firewall/base.ts.
+ufwc() { LC_ALL=C ufw "$@"; }
+
+# Ports sshd uses: the panel setting plus every port sshd is configured for or
+# listening on. Schela never reconfigures sshd; a wrong setting must not close
+# the port the admin logs in on.
+ssh_ports() {
+  local setting
+  setting="$(jq -r '.settings.sshPort // 22' "$STATE")"
+  ok_port "$setting" || setting=22
+  {
+    echo "$setting"
+    if command -v sshd >/dev/null 2>&1; then
+      # sshd -T refuses to run without its privilege separation directory,
+      # which only exists once the ssh service has started.
+      [ -d /run/sshd ] || [ "$DRY" -eq 1 ] || install -d -m 0755 /run/sshd
+      sshd -T 2>/dev/null | awk '
+        $1 == "port" { print $2 }
+        $1 == "listenaddress" { n = split($2, a, ":"); print a[n] }' || true
     fi
-  done < <(jq -c '.firewall // [] | .[]' "$STATE")
+    if command -v ss >/dev/null 2>&1; then
+      ss -Hltnp 2>/dev/null | awk '/\("sshd",/ { n = split($4, a, ":"); print a[n] }' || true
+    fi
+  } | while read -r p; do if ok_port "$p"; then echo "$p"; fi; done | sort -un
+}
+
+# The wanted ruleset, one rule per line in the form `ufw show added` prints it:
+# deny rules first, then allow rules. Arguments: the SSH ports.
+firewall_wanted() {
+  python3 - "$STATE" "$@" <<'PY'
+import ipaddress, json, sys
+
+state = json.load(open(sys.argv[1]))
+ssh = {int(p) for p in sys.argv[2:]}
+modules = state.get("modules") or {}
+
+def warn(msg):
+    print(f"schela-apply: firewall: {msg}", file=sys.stderr)
+
+def port_of(value):
+    s = str(value)
+    if not s.isdigit() or not 1 <= int(s) <= 65535:
+        return None
+    return int(s)
+
+def source_of(value):
+    s = str(value).strip()
+    if s == "any":
+        return "any"
+    if "%" in s:  # ufw takes no IPv6 zone index
+        return None
+    try:
+        net = ipaddress.ip_network(s, strict=False)
+    except ValueError:
+        return None
+    # ufw reads a /0 as "any" (both families), keeps the network address of
+    # a range and drops a host prefix.
+    if net.prefixlen == 0:
+        return "any"
+    if net.prefixlen == net.max_prefixlen:
+        return str(net.network_address)
+    return str(net)
+
+def match(port, proto, source):
+    if source == "any":
+        return str(port) if proto == "any" else f"{port}/{proto}"
+    tail = f" proto {proto}" if proto != "any" else ""
+    return f"from {source} to any port {port}{tail}"
+
+base = [(p, "tcp") for p in sorted(ssh)] + [(80, "tcp"), (443, "tcp")]
+if modules.get("mail") is True:
+    base += [(25, "tcp"), (587, "tcp"), (993, "tcp")]
+if modules.get("dns") is True:
+    base += [(53, "tcp"), (53, "udp")]
+
+denies, allows = [], [("allow", match(p, proto, "any")) for p, proto in base]
+for rule in state.get("firewall") or []:
+    if rule.get("enabled") is not True:
+        continue
+    action = rule.get("action")
+    proto = rule.get("protocol")
+    port = port_of(rule.get("port"))
+    source = source_of(rule.get("source", "any"))
+    if action not in ("allow", "deny") or proto not in ("tcp", "udp", "any") or port is None or source is None:
+        warn(f"skipped invalid rule {json.dumps(rule)}")
+        continue
+    if action == "deny" and source == "any" and port in ssh and proto in ("tcp", "any"):
+        warn(f"kept SSH open: skipped deny {proto}/{port} from {source}")
+        continue
+    (denies if action == "deny" else allows).append((action, match(port, proto, source)))
+
+# ufw holds one rule per match and changes its action in place, so a deny and
+# an allow on the same match cannot both exist: the deny wins.
+seen = set()
+for action, m in denies + allows:
+    if m in seen:
+        continue
+    seen.add(m)
+    print(f"{action} {m}")
+PY
+}
+
+# Rules ufw holds now, in the same form. Comments are dropped: ufw matches
+# rules without them.
+firewall_current() {
+  ufwc show added | sed -n "s/^ufw //p" | sed -E "s/ comment '.*'\$//"
+}
+
+# ufw is first-match: no deny rule may sit below a rule with another action,
+# in the IPv4 or the IPv6 table.
+firewall_deny_first() {
+  local f
+  for f in /etc/ufw/user.rules /etc/ufw/user6.rules; do
+    [ -f "$f" ] || continue
+    awk '$1 == "###" && $2 == "tuple" { if ($4 == "deny") { if (other) bad = 1 } else other = 1 }
+      END { exit bad }' "$f" || return 1
+  done
+}
+
+# $1: a rule as firewall_current prints it.
+firewall_delete() {
+  local args
+  case "$1" in
+    route\ *) read -ra args <<<"${1#route }"; ufwc --force route delete "${args[@]}" >/dev/null ;;
+    *) read -ra args <<<"$1"; ufwc --force delete "${args[@]}" >/dev/null ;;
+  esac
+}
+
+apply_firewall() {
+  if ! command -v ufw >/dev/null 2>&1; then
+    log "ufw not installed: firewall not applied"
+    return 0
+  fi
+  local ssh want have r args out
+  out="$(ssh_ports)"
+  mapfile -t ssh <<<"$out"
+  # Never converge towards a ruleset that could not be computed: an empty one
+  # would delete SSH.
+  out="$(firewall_wanted "${ssh[@]}")" || die "firewall: could not compute the ruleset"
+  mapfile -t want <<<"$out"
+  [ -n "$out" ] && [ "${#ssh[@]}" -gt 0 ] && [ -n "${ssh[0]}" ] || die "firewall: empty ruleset"
+  if [ "$DRY" -eq 1 ]; then
+    log "would converge ufw to ${#want[@]} rules (ssh ports: ${ssh[*]})"
+    for r in "${want[@]}"; do log "  ufw $r"; done
+    return
+  fi
+  local -A wanted=() held=() held_match=()
+  for r in "${want[@]}"; do wanted["$r"]=1; done
+  mapfile -t have < <(firewall_current)
+  for r in "${have[@]}"; do held["$r"]=1; held_match["${r#* }"]="$r"; done
+
+  # 1. Allow rules first, SSH included: nothing is removed before they hold.
+  # ufw appends a new rule, or changes the action of a rule with the same
+  # match in place (a legacy `limit 22/tcp` becomes `allow 22/tcp` with no gap).
+  for r in "${want[@]}"; do
+    [ "${r%% *}" = "allow" ] && [ -z "${held[$r]:-}" ] || continue
+    read -ra args <<<"$r"
+    ufwc "${args[@]}" >/dev/null
+  done
+  # 2. New deny rules go on top. ufw skips a prepend when a rule with the same
+  # match exists, so that rule goes first: the traffic is dropped by the
+  # default policy until the deny is in.
+  for r in "${want[@]}"; do
+    [ "${r%% *}" = "deny" ] && [ -z "${held[$r]:-}" ] || continue
+    [ -z "${held_match[${r#* }]:-}" ] || firewall_delete "${held_match[${r#* }]}"
+    read -ra args <<<"$r"
+    ufwc prepend "${args[@]}" >/dev/null
+  done
+  # 3. Everything else goes: rules removed or turned off in the panel, ports
+  # of modules turned off, rules left by older installs or added by hand.
+  mapfile -t have < <(firewall_current)
+  for r in "${have[@]}"; do
+    [ -n "${wanted[$r]:-}" ] || firewall_delete "$r"
+  done
+  # 4. An allow that replaced an old deny in place (step 1) sits above the
+  # denies: move the denies back up.
+  if ! firewall_deny_first; then
+    for r in "${want[@]}"; do
+      [ "${r%% *}" = "deny" ] || continue
+      firewall_delete "$r"
+      read -ra args <<<"$r"
+      ufwc prepend "${args[@]}" >/dev/null
+    done
+  fi
+
+  grep -qx 'DEFAULT_INPUT_POLICY="DROP"' /etc/default/ufw || ufwc default deny incoming >/dev/null
+  grep -qx 'DEFAULT_OUTPUT_POLICY="ACCEPT"' /etc/default/ufw || ufwc default allow outgoing >/dev/null
+  # grep without -q reads all of ufw's output: no SIGPIPE under pipefail.
+  ufwc status | grep -x 'Status: active' >/dev/null || ufwc --force enable >/dev/null
+
+  mapfile -t have < <(firewall_current)
+  if [ "$(printf '%s\n' "${have[@]}" | sort)" != "$(printf '%s\n' "${want[@]}" | sort)" ] \
+    || ! firewall_deny_first; then
+    die "firewall did not converge: ufw holds [$(printf '%s; ' "${have[@]}")], wanted [$(printf '%s; ' "${want[@]}")]"
+  fi
+  log "firewall: ${#want[@]} rules (ssh ports: ${ssh[*]})"
+}
+
+# --- automatic updates -----------------------------------------------------
+# settings.autoUpdates turns the daily package list refresh and
+# unattended-upgrades on or off. Which updates it installs stays the
+# distribution's default (50unattended-upgrades). install.sh writes the same
+# file before the first apply.
+apply_auto_updates() {
+  local v=1
+  [ "$(jq -r '.settings.autoUpdates' "$STATE")" = "false" ] && v=0
+  write_file /etc/apt/apt.conf.d/20auto-upgrades "// Managed by Schela: the panel setting \"Unattended upgrades\".
+APT::Periodic::Update-Package-Lists \"$v\";
+APT::Periodic::Unattended-Upgrade \"$v\";"
 }
 
 # --- mail ------------------------------------------------------------------
@@ -1901,6 +2086,7 @@ apply_sites
 apply_apps
 apply_workers
 apply_firewall
+apply_auto_updates
 apply_mail
 apply_dns
 apply_cron
