@@ -96,10 +96,41 @@ describe("auth configuration", () => {
     assert.match(server, /databaseHooks:[\s\S]*user:[\s\S]*create:[\s\S]*before:/);
   });
 
-  it("has no sign-in path other than the local admin password", () => {
-    for (const plugin of ["genericOAuth", "bearer(", "socialProviders", "anonymous(", "magicLink("]) {
+  it("has no sign-in path other than the local admin password and its second factor", () => {
+    for (const plugin of [
+      "genericOAuth",
+      "bearer(",
+      "socialProviders",
+      "anonymous(",
+      "magicLink(",
+      "oneTimeToken(",
+      "emailOTP(",
+      "phoneNumber(",
+      "username(",
+      "passkey(",
+    ]) {
       assert.ok(!server.includes(plugin), `auth/server.ts must not use ${plugin}`);
     }
+  });
+
+  it("offers TOTP two-factor and logs failed sign-ins, with the cookie bridge last", () => {
+    const plugins = server.slice(server.indexOf("plugins: ["));
+    const order = ["twoFactor(", "failedSignInLog()", "tanstackStartCookies()"].map((p) =>
+      plugins.indexOf(p),
+    );
+    assert.ok(order.every((i) => i >= 0), `plugins missing: ${order}`);
+    assert.deepEqual([...order].sort((a, b) => a - b), order);
+    assert.ok(!/twoFactor\([^)]*skipVerificationOnEnable/.test(server), "enable must need a code");
+  });
+
+  it("keys rate limits on the X-Real-IP header nginx sets, never X-Forwarded-For", () => {
+    const clientIp = readFileSync(join(SRC, "auth/client-ip.ts"), "utf8");
+    assert.match(clientIp, /CLIENT_IP_HEADER = "x-real-ip"/);
+    assert.match(server, /ipAddress:\s*\{\s*ipAddressHeaders:\s*\[CLIENT_IP_HEADER\]\s*\}/);
+    for (const weakening of ["trustedProxies", "disableIpTracking"]) {
+      assert.ok(!server.includes(weakening), `auth/server.ts sets ${weakening}`);
+    }
+    assert.doesNotMatch(server, /rateLimit:[\s\S]*enabled:\s*false/);
   });
 
   it("checks the session row on every server call, not the cookie cache", () => {

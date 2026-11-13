@@ -1,4 +1,3 @@
-import { seedBaseFirewall } from "@/features/firewall/defaults";
 import { seedModules, syncModuleCatalog } from "@/features/modules/modules";
 import { logActivity } from "@/server/activity";
 import type { Sql } from "@/server/db";
@@ -36,6 +35,5 @@ export async function ensureSetup(sql: Sql): Promise<void> {
     await logActivity(sql, "setup", "Schela is ready");
   }
   await seedModules(sql, ["php", "node", "firewall", "ssl", "mail", "dns", "backups"]);
-  await seedBaseFirewall(sql);
   await syncModuleCatalog(sql);
 }

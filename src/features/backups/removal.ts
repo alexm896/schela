@@ -4,6 +4,7 @@ import { applyAfterChange } from "@/server/apply";
 import type { Sql } from "@/server/db";
 import { purge } from "@/server/purge";
 import type { BackupJobRemovalOption } from "./backups";
+import { removeBackupSecrets } from "./secrets";
 
 // Deleting a backup job: its archives stay unless the admin ticks them.
 
@@ -33,6 +34,14 @@ export async function removeBackupJob(
   const picked = chosen(plan, requested);
   await sql`delete from backup_jobs where id = ${job.id}`;
   await logActivity(sql, "backup", `Removed backup job ${job.name}`);
+  const warnings: string[] = [];
+  // Its S3 secret and SSH key go with it.
+  try {
+    await removeBackupSecrets(null, [job.id]);
+  } catch (err) {
+    warnings.push(`Keys of ${job.name}: ${err instanceof Error ? err.message : String(err)}`);
+  }
   await applyAfterChange(sql);
-  return picked.has("archives") ? purge([{ op: "backups", jobId: job.id }]) : [];
+  if (picked.has("archives")) warnings.push(...(await purge([{ op: "backups", jobId: job.id }])));
+  return warnings;
 }

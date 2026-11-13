@@ -39,22 +39,26 @@ function LoginPage() {
         await createFirstAdmin({ data: { username, password } });
       }
       let last = "Wrong username or password";
-      let ok = false;
+      let next: "/" | "/two-factor" | null = null;
       for (const email of candidates) {
-        const { error } = await authClient.signIn.email({
+        const { data: res, error } = await authClient.signIn.email({
           email,
           password,
           callbackURL: "/",
         });
         if (!error) {
-          ok = true;
+          // With two-factor on, the password step creates no session: the
+          // code step does.
+          next = res && "twoFactorRedirect" in res && res.twoFactorRedirect ? "/two-factor" : "/";
           break;
         }
         last = error.message || last;
+        // Rate limited: another candidate would be refused the same way.
+        if (error.status === 429) break;
       }
-      if (!ok) throw new Error(last);
-      toast.success(firstRun ? "Admin account created" : "Welcome back");
-      await navigate({ to: "/" });
+      if (!next) throw new Error(last);
+      if (next === "/") toast.success(firstRun ? "Admin account created" : "Welcome back");
+      await navigate({ to: next });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Sign-in failed");
       setBusy(false);

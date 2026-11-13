@@ -2,24 +2,37 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { bootstrapAdminIfNeeded } from "@/auth/bootstrap-admin";
 import { authMiddleware } from "@/auth/middleware";
-import { seedBaseFirewall } from "@/features/firewall/defaults";
+import { hasLegacyBackupSecrets } from "@/features/backups/secrets";
 import { readModules, seedModules } from "@/features/modules/modules";
 import { logActivity } from "@/server/activity";
 import { applyAfterChange } from "@/server/apply";
 import { getSql } from "@/server/db";
+import { isVpsApply } from "@/server/env";
 import { ensureSetup, readSettings } from "./settings";
 import type { PanelState } from "./types";
+
+const globalRef = globalThis as typeof globalThis & { __schelaLegacyMoveStarted__?: boolean };
 
 /**
  * The only panel data shown before sign-in: the hostname on the login page.
  * Also runs first-boot setup and creates the bootstrap admin, which must
- * happen before anyone can sign in.
+ * happen before anyone can sign in. The installer requests this page after
+ * every install or update, so it also moves backup secrets an older panel kept
+ * in its database into root-only key files (the apply does it).
  */
 export const getLoginInfo = createServerFn({ method: "GET" }).handler(
   async (): Promise<{ hostname: string }> => {
     const sql = await getSql();
     await ensureSetup(sql);
     await bootstrapAdminIfNeeded();
+    // Once per panel process and in the background: this page is public, so a
+    // visitor must neither wait for an apply nor be able to start one per request.
+    if (isVpsApply() && !globalRef.__schelaLegacyMoveStarted__) {
+      globalRef.__schelaLegacyMoveStarted__ = true;
+      void hasLegacyBackupSecrets(sql)
+        .then((left) => (left ? applyAfterChange(sql) : undefined))
+        .catch((err) => console.error("[schela] backup secrets not moved yet:", err));
+    }
     const settings = await readSettings(sql);
     return { hostname: settings.hostname };
   },
@@ -60,7 +73,6 @@ export const completeSetup = createServerFn({ method: "POST" })
     `;
     const enabled = new Set(["ssl", ...data.modules]);
     await seedModules(sql, [...enabled]);
-    await seedBaseFirewall(sql);
     await logActivity(sql, "setup", "Schela is ready");
     const settings = await readSettings(sql);
     const modules = await readModules(sql);

@@ -7,3 +7,4 @@ schela ALL=(root) NOPASSWD: /usr/local/sbin/schela-backup cron
 schela ALL=(root) NOPASSWD: /usr/local/sbin/schela-db ""
 schela ALL=(root) NOPASSWD: /usr/local/sbin/schela-purge ""
 schela ALL=(root) NOPASSWD: /usr/local/sbin/schela-search ""
+schela ALL=(root) NOPASSWD: /usr/local/sbin/schela-backup-keys ""

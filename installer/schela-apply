@@ -8,7 +8,14 @@ TEMPLATES="${SCHELA_TEMPLATES:-/usr/local/share/schela/templates}"
 # existing sites and apps may still run on.
 VERSIONS="${SCHELA_VERSIONS:-/usr/local/share/schela/versions.json}"
 DRY=0
-[ "${1:-}" = "--dry-run" ] && DRY=1
+# --panel: only the panel certificate and vhost (install.sh, schela fix).
+# --renew-hook: run by certbot after a renewal (see install_deploy_hook).
+MODE=apply
+case "${1:-}" in
+  --dry-run) DRY=1 ;;
+  --panel) MODE=panel ;;
+  --renew-hook) MODE=renew-hook ;;
+esac
 
 log() { printf 'schela-apply: %s\n' "$*"; }
 die() { printf 'schela-apply: %s\n' "$*" >&2; exit 1; }
@@ -129,7 +136,9 @@ ensure_home() {
 # One apply at a time. The panel starts one per change, and two at once race
 # on users, unit files and configs. A later apply waits its turn, then applies
 # the newest state.
-if [ "$DRY" -eq 0 ]; then
+# The renewal hook skips the lock: certbot can run it from inside an apply
+# (certonly renewing an existing lineage), which already holds the lock.
+if [ "$DRY" -eq 0 ] && [ "$MODE" != "renew-hook" ]; then
   exec 9>"${SCHELA_APPLY_LOCK:-/run/schela-apply.lock}"
   flock 9
 fi
@@ -350,9 +359,13 @@ apply_apps() {
         fi
       fi
 
-      cat >"$SYSTEMD_DIR/${unit}.service" <<UNIT
+      unit_file="$SYSTEMD_DIR/${unit}.service"
+      # The name is free text from the panel: a newline would add unit lines
+      # (ExecStartPre=+ runs as root) and % is a systemd specifier.
+      label="${name//[^A-Za-z0-9 ._-]/_}"
+      content="$(cat <<UNIT
 [Unit]
-Description=Schela Node app ${name}
+Description=Schela Node app ${label}
 After=network.target
 [Service]
 Type=simple
@@ -364,13 +377,43 @@ Environment=PORT=${port}
 ExecStart=${NODE_BIN} /home/${user}/app/${entry}
 Restart=on-failure
 RestartSec=3
-NoNewPrivileges=true
-PrivateTmp=true
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=tmpfs
+BindPaths=/home/${user}
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+# AF_NETLINK on top of the workers' set: Node's os.networkInterfaces() reads
+# the interface list over netlink and throws without it.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 [Install]
 WantedBy=multi-user.target
 UNIT
+)"
+      changed=0
+      if [ ! -f "$unit_file" ] || [ "$(cat "$unit_file")" != "$content" ]; then
+        write_file "$unit_file" "$content"
+        changed=1
+      fi
       systemctl daemon-reload
       if [ "$status" = "running" ]; then
+        # A running app keeps its old unit until it restarts; restart it so a
+        # changed unit (for example new sandboxing) takes effect now.
+        if [ "$changed" -eq 1 ] && systemctl is-active --quiet "$unit"; then
+          systemctl restart "$unit" || true
+        fi
         systemctl enable --now "$unit" || true
       else
         systemctl disable --now "$unit" >/dev/null 2>&1 || true
@@ -407,6 +450,117 @@ UNIT
   if [ "$removed" -eq 1 ]; then
     systemctl daemon-reload
   fi
+}
+
+# --- fail2ban ----------------------------------------------------------------
+F2B_JAIL="/etc/fail2ban/jail.d/schela.conf"
+F2B_FILTER="/etc/fail2ban/filter.d/schela-panel.conf"
+# One action for every jail. Its bans sit in fail2ban's own nftables table
+# (inet f2b-table, hooked before the filter chains), which no ufw command
+# touches: ufw reset, reload, enable and rule changes leave them in place. The
+# ufw action would store bans as ufw rules, which ufw rule convergence deletes.
+F2B_BANACTION="nftables[type=multiport]"
+
+# Ports sshd answers on. Schela does not configure sshd, so besides the panel
+# setting take whatever sshd, or the systemd socket that starts it, listens
+# on right now.
+f2b_ssh_ports() {
+  local s p
+  {
+    jq -r '.settings.sshPort // empty' "$STATE"
+    if command -v ss >/dev/null 2>&1; then
+      ss -Hltnp 2>/dev/null | awk '/users:\(\("sshd",/ {print $4}' | sed 's/.*://'
+    fi
+    for s in ssh.socket sshd.socket; do
+      systemctl is-active --quiet "$s" 2>/dev/null || continue
+      systemctl show -p Listen --value "$s" 2>/dev/null | tr ' ' '\n' | sed -n 's/.*:\([0-9][0-9]*\)$/\1/p'
+    done
+  } | while IFS= read -r p; do
+    if ok_port "$p"; then echo "$p"; fi
+  done | sort -n -u | paste -sd, -
+}
+
+apply_fail2ban() {
+  command -v fail2ban-client >/dev/null 2>&1 || return 0
+  [ -d "${F2B_JAIL%/*}" ] && [ -d "${F2B_FILTER%/*}" ] || return 0
+  local ports jail filter old_jail="" old_filter="" had_jail=0 had_filter=0
+  ports="$(f2b_ssh_ports)"
+  [ -n "$ports" ] || ports="ssh"
+
+  # backend = systemd everywhere: Debian 12 and 13 have no /var/log/auth.log
+  # or mail.log by default, and on every supported system sshd, Postfix,
+  # Dovecot and the panel all log to the journal. Ban time, find time and
+  # retries are fail2ban's defaults from jail.conf.
+  jail="# Managed by schela-apply: rewritten on every apply. Put local changes in
+# /etc/fail2ban/jail.local, which fail2ban reads after this file.
+
+[sshd]
+enabled = true
+port = ${ports}
+backend = systemd
+# Ubuntu names the unit ssh.service; OpenSSH 9.8 and later log failed logins
+# from sshd-session.
+journalmatch = _SYSTEMD_UNIT=ssh.service + _SYSTEMD_UNIT=sshd.service + _COMM=sshd + _COMM=sshd-session
+banaction = ${F2B_BANACTION}
+
+[schela-panel]
+enabled = true
+filter = schela-panel
+port = http,https
+backend = systemd
+banaction = ${F2B_BANACTION}"
+  if mod_on mail; then
+    jail+="
+
+[postfix]
+enabled = true
+# Rejections, SASL failures and dropped connections.
+mode = aggressive
+backend = systemd
+# Postfix on Ubuntu 22.04/24.04 and Debian 12 runs as postfix@-.service, which
+# the stock filter on those releases does not match.
+journalmatch = _SYSTEMD_UNIT=postfix.service + _SYSTEMD_UNIT=postfix@-.service
+banaction = ${F2B_BANACTION}
+
+[dovecot]
+enabled = true
+backend = systemd
+banaction = ${F2B_BANACTION}"
+  fi
+
+  filter="# Managed by schela-apply. Failed panel sign-ins, which the panel prints to
+# stdout and systemd stores in the journal of schela-panel.service.
+
+[INCLUDES]
+before = common.conf
+
+[Definition]
+# <ADDR> takes an IP address only, never a host name to resolve.
+failregex = ^%(__prefix_line)sschela-auth: failed sign-in from <ADDR>\$
+ignoreregex =
+
+[Init]
+journalmatch = _SYSTEMD_UNIT=schela-panel.service"
+
+  if [ -f "$F2B_JAIL" ]; then had_jail=1; old_jail="$(cat "$F2B_JAIL")"; fi
+  if [ -f "$F2B_FILTER" ]; then had_filter=1; old_filter="$(cat "$F2B_FILTER")"; fi
+  if [ "$had_jail" -eq 1 ] && [ "$old_jail" = "$jail" ] \
+    && [ "$had_filter" -eq 1 ] && [ "$old_filter" = "$filter" ]; then
+    return 0
+  fi
+  write_file "$F2B_FILTER" "$filter"
+  write_file "$F2B_JAIL" "$jail"
+  [ "$DRY" -eq 0 ] || return 0
+
+  if ! fail2ban-client -t >/dev/null 2>&1; then
+    # Never leave fail2ban with a configuration it refuses to load.
+    if [ "$had_jail" -eq 1 ]; then write_file "$F2B_JAIL" "$old_jail"; else rm -f "$F2B_JAIL"; fi
+    if [ "$had_filter" -eq 1 ]; then write_file "$F2B_FILTER" "$old_filter"; else rm -f "$F2B_FILTER"; fi
+    log "fail2ban: configuration test failed, kept the previous jails"
+    return 0
+  fi
+  log "fail2ban: jails sshd (port ${ports}), schela-panel$(mod_on mail && printf ', postfix, dovecot')"
+  systemctl reload-or-restart fail2ban || log "fail2ban: reload failed"
 }
 
 # --- site workers (queues, Horizon, scheduler) ------------------------------
@@ -591,38 +745,249 @@ WantedBy=multi-user.target"
 }
 
 # --- firewall --------------------------------------------------------------
-apply_firewall() {
-  command -v ufw >/dev/null 2>&1 || return 0
-  [ "$DRY" -eq 1 ] && { log "would apply ufw rules"; return; }
-  ufw --force enable >/dev/null
-  ufw default deny incoming >/dev/null
-  ufw default allow outgoing >/dev/null
-  # Always keep SSH so we cannot lock ourselves out.
-  ufw allow 22/tcp >/dev/null || true
-  ufw allow 80/tcp >/dev/null || true
-  ufw allow 443/tcp >/dev/null || true
-  while IFS= read -r rule; do
-    [ -n "$rule" ] || continue
-    enabled="$(jq -r '.enabled' <<<"$rule")"
-    action="$(jq -r '.action' <<<"$rule")"
-    proto="$(jq -r '.protocol' <<<"$rule")"
-    port="$(jq -r '.port' <<<"$rule")"
-    source="$(jq -r '.source' <<<"$rule")"
-    [ "$enabled" = "true" ] || continue
-    [ "$action" = "allow" ] || continue
-    ok_port "$port" || continue
-    [[ "$proto" =~ ^(tcp|udp|any)$ ]] || continue
-    spec=""
-    if [ "$proto" = "any" ]; then spec="$port"; else spec="${port}/${proto}"; fi
-    if [ "$source" = "any" ]; then
-      ufw allow "$spec" >/dev/null || true
-    else
-      ufw allow from "$source" to any port "$port" proto "$proto" >/dev/null || true
+# apply_firewall owns the whole ufw ruleset and converges it on every run: SSH,
+# 80/tcp, 443/tcp, the ports of enabled modules and the panel's enabled rules.
+# Every other rule is removed. ufw is first-match, so deny rules sit above all
+# allow rules. Missing rules are added before stale ones are deleted and ufw is
+# never reset or disabled, so SSH stays allowed at every step.
+# The panel lists the same base rules: src/features/firewall/base.ts.
+ufwc() { LC_ALL=C ufw "$@"; }
+
+# Ports sshd uses: the panel setting plus every port sshd is configured for or
+# listening on. Schela never reconfigures sshd; a wrong setting must not close
+# the port the admin logs in on.
+ssh_ports() {
+  local setting
+  setting="$(jq -r '.settings.sshPort // 22' "$STATE")"
+  ok_port "$setting" || setting=22
+  {
+    echo "$setting"
+    if command -v sshd >/dev/null 2>&1; then
+      # sshd -T refuses to run without its privilege separation directory,
+      # which only exists once the ssh service has started.
+      [ -d /run/sshd ] || [ "$DRY" -eq 1 ] || install -d -m 0755 /run/sshd
+      sshd -T 2>/dev/null | awk '
+        $1 == "port" { print $2 }
+        $1 == "listenaddress" { n = split($2, a, ":"); print a[n] }' || true
     fi
-  done < <(jq -c '.firewall // [] | .[]' "$STATE")
+    if command -v ss >/dev/null 2>&1; then
+      ss -Hltnp 2>/dev/null | awk '/\("sshd",/ { n = split($4, a, ":"); print a[n] }' || true
+    fi
+  } | while read -r p; do if ok_port "$p"; then echo "$p"; fi; done | sort -un
+}
+
+# The wanted ruleset, one rule per line in the form `ufw show added` prints it:
+# deny rules first, then allow rules. Arguments: the SSH ports.
+firewall_wanted() {
+  python3 - "$STATE" "$@" <<'PY'
+import ipaddress, json, sys
+
+state = json.load(open(sys.argv[1]))
+ssh = {int(p) for p in sys.argv[2:]}
+modules = state.get("modules") or {}
+
+def warn(msg):
+    print(f"schela-apply: firewall: {msg}", file=sys.stderr)
+
+def port_of(value):
+    s = str(value)
+    if not s.isdigit() or not 1 <= int(s) <= 65535:
+        return None
+    return int(s)
+
+def source_of(value):
+    s = str(value).strip()
+    if s == "any":
+        return "any"
+    if "%" in s:  # ufw takes no IPv6 zone index
+        return None
+    try:
+        net = ipaddress.ip_network(s, strict=False)
+    except ValueError:
+        return None
+    # ufw reads a /0 as "any" (both families), keeps the network address of
+    # a range and drops a host prefix.
+    if net.prefixlen == 0:
+        return "any"
+    if net.prefixlen == net.max_prefixlen:
+        return str(net.network_address)
+    return str(net)
+
+def match(port, proto, source):
+    if source == "any":
+        return str(port) if proto == "any" else f"{port}/{proto}"
+    tail = f" proto {proto}" if proto != "any" else ""
+    return f"from {source} to any port {port}{tail}"
+
+base = [(p, "tcp") for p in sorted(ssh)] + [(80, "tcp"), (443, "tcp")]
+if modules.get("mail") is True:
+    base += [(25, "tcp"), (587, "tcp"), (993, "tcp")]
+if modules.get("dns") is True:
+    base += [(53, "tcp"), (53, "udp")]
+
+denies, allows = [], [("allow", match(p, proto, "any")) for p, proto in base]
+for rule in state.get("firewall") or []:
+    if rule.get("enabled") is not True:
+        continue
+    action = rule.get("action")
+    proto = rule.get("protocol")
+    port = port_of(rule.get("port"))
+    source = source_of(rule.get("source", "any"))
+    if action not in ("allow", "deny") or proto not in ("tcp", "udp", "any") or port is None or source is None:
+        warn(f"skipped invalid rule {json.dumps(rule)}")
+        continue
+    if action == "deny" and source == "any" and port in ssh and proto in ("tcp", "any"):
+        warn(f"kept SSH open: skipped deny {proto}/{port} from {source}")
+        continue
+    (denies if action == "deny" else allows).append((action, match(port, proto, source)))
+
+# ufw holds one rule per match and changes its action in place, so a deny and
+# an allow on the same match cannot both exist: the deny wins.
+seen = set()
+for action, m in denies + allows:
+    if m in seen:
+        continue
+    seen.add(m)
+    print(f"{action} {m}")
+PY
+}
+
+# Rules ufw holds now, in the same form. Comments are dropped: ufw matches
+# rules without them.
+firewall_current() {
+  ufwc show added | sed -n "s/^ufw //p" | sed -E "s/ comment '.*'\$//"
+}
+
+# ufw is first-match: no deny rule may sit below a rule with another action,
+# in the IPv4 or the IPv6 table.
+firewall_deny_first() {
+  local f
+  for f in /etc/ufw/user.rules /etc/ufw/user6.rules; do
+    [ -f "$f" ] || continue
+    awk '$1 == "###" && $2 == "tuple" { if ($4 == "deny") { if (other) bad = 1 } else other = 1 }
+      END { exit bad }' "$f" || return 1
+  done
+}
+
+# $1: a rule as firewall_current prints it.
+firewall_delete() {
+  local args
+  case "$1" in
+    route\ *) read -ra args <<<"${1#route }"; ufwc --force route delete "${args[@]}" >/dev/null ;;
+    *) read -ra args <<<"$1"; ufwc --force delete "${args[@]}" >/dev/null ;;
+  esac
+}
+
+apply_firewall() {
+  if ! command -v ufw >/dev/null 2>&1; then
+    log "ufw not installed: firewall not applied"
+    return 0
+  fi
+  local ssh want have r args out
+  out="$(ssh_ports)"
+  mapfile -t ssh <<<"$out"
+  # Never converge towards a ruleset that could not be computed: an empty one
+  # would delete SSH.
+  out="$(firewall_wanted "${ssh[@]}")" || die "firewall: could not compute the ruleset"
+  mapfile -t want <<<"$out"
+  [ -n "$out" ] && [ "${#ssh[@]}" -gt 0 ] && [ -n "${ssh[0]}" ] || die "firewall: empty ruleset"
+  if [ "$DRY" -eq 1 ]; then
+    log "would converge ufw to ${#want[@]} rules (ssh ports: ${ssh[*]})"
+    for r in "${want[@]}"; do log "  ufw $r"; done
+    return
+  fi
+  local -A wanted=() held=() held_match=()
+  for r in "${want[@]}"; do wanted["$r"]=1; done
+  mapfile -t have < <(firewall_current)
+  for r in "${have[@]}"; do held["$r"]=1; held_match["${r#* }"]="$r"; done
+
+  # 1. Allow rules first, SSH included: nothing is removed before they hold.
+  # ufw appends a new rule, or changes the action of a rule with the same
+  # match in place (a legacy `limit 22/tcp` becomes `allow 22/tcp` with no gap).
+  for r in "${want[@]}"; do
+    [ "${r%% *}" = "allow" ] && [ -z "${held[$r]:-}" ] || continue
+    read -ra args <<<"$r"
+    ufwc "${args[@]}" >/dev/null
+  done
+  # 2. New deny rules go on top. ufw skips a prepend when a rule with the same
+  # match exists, so that rule goes first: the traffic is dropped by the
+  # default policy until the deny is in.
+  for r in "${want[@]}"; do
+    [ "${r%% *}" = "deny" ] && [ -z "${held[$r]:-}" ] || continue
+    [ -z "${held_match[${r#* }]:-}" ] || firewall_delete "${held_match[${r#* }]}"
+    read -ra args <<<"$r"
+    ufwc prepend "${args[@]}" >/dev/null
+  done
+  # 3. Everything else goes: rules removed or turned off in the panel, ports
+  # of modules turned off, rules left by older installs or added by hand.
+  mapfile -t have < <(firewall_current)
+  for r in "${have[@]}"; do
+    [ -n "${wanted[$r]:-}" ] || firewall_delete "$r"
+  done
+  # 4. An allow that replaced an old deny in place (step 1) sits above the
+  # denies: move the denies back up.
+  if ! firewall_deny_first; then
+    for r in "${want[@]}"; do
+      [ "${r%% *}" = "deny" ] || continue
+      firewall_delete "$r"
+      read -ra args <<<"$r"
+      ufwc prepend "${args[@]}" >/dev/null
+    done
+  fi
+
+  grep -qx 'DEFAULT_INPUT_POLICY="DROP"' /etc/default/ufw || ufwc default deny incoming >/dev/null
+  grep -qx 'DEFAULT_OUTPUT_POLICY="ACCEPT"' /etc/default/ufw || ufwc default allow outgoing >/dev/null
+  # grep without -q reads all of ufw's output: no SIGPIPE under pipefail.
+  ufwc status | grep -x 'Status: active' >/dev/null || ufwc --force enable >/dev/null
+
+  mapfile -t have < <(firewall_current)
+  if [ "$(printf '%s\n' "${have[@]}" | sort)" != "$(printf '%s\n' "${want[@]}" | sort)" ] \
+    || ! firewall_deny_first; then
+    die "firewall did not converge: ufw holds [$(printf '%s; ' "${have[@]}")], wanted [$(printf '%s; ' "${want[@]}")]"
+  fi
+  log "firewall: ${#want[@]} rules (ssh ports: ${ssh[*]})"
+}
+
+# --- automatic updates -----------------------------------------------------
+# settings.autoUpdates turns the daily package list refresh and
+# unattended-upgrades on or off. Which updates it installs stays the
+# distribution's default (50unattended-upgrades). install.sh writes the same
+# file before the first apply.
+apply_auto_updates() {
+  local v=1
+  [ "$(jq -r '.settings.autoUpdates' "$STATE")" = "false" ] && v=0
+  write_file /etc/apt/apt.conf.d/20auto-upgrades "// Managed by Schela: the panel setting \"Unattended upgrades\".
+APT::Periodic::Update-Package-Lists \"$v\";
+APT::Periodic::Unattended-Upgrade \"$v\";"
 }
 
 # --- mail ------------------------------------------------------------------
+# Server hostname certificate, maintained outside apply_mail (Let's Encrypt or
+# self-signed). Dovecot and Postfix read it as root before dropping privileges.
+MAIL_TLS_CERT="/var/lib/schela/tls/host.crt"
+MAIL_TLS_KEY="/var/lib/schela/tls/host.key"
+
+# Postfix submission on 587: TLS before AUTH, SASL through Dovecot, relay only
+# for authenticated users, and only as an address the login owns.
+mail_submission() {
+  postconf -M submission/inet="submission inet n - n - - smtpd"
+  local opt
+  for opt in \
+    syslog_name=postfix/submission \
+    smtpd_tls_security_level=encrypt \
+    smtpd_tls_auth_only=yes \
+    smtpd_sasl_auth_enable=yes \
+    smtpd_sasl_type=dovecot \
+    smtpd_sasl_path=private/auth \
+    smtpd_sasl_security_options=noanonymous \
+    smtpd_sender_login_maps=hash:/var/lib/schela/mail/senders \
+    smtpd_client_restrictions=permit_sasl_authenticated,reject \
+    smtpd_sender_restrictions=reject_sender_login_mismatch \
+    smtpd_relay_restrictions=permit_sasl_authenticated,reject; do
+    postconf -P "submission/inet/${opt}"
+  done
+}
+
 apply_mail() {
   mod_on mail || return 0
   [ -d /etc/postfix ] || return 0
@@ -644,6 +1009,7 @@ apply_mail() {
   : >/var/lib/schela/mail/vmailbox
   : >/var/lib/schela/mail/vdomains
   : >/var/lib/schela/mail/users
+  : >/var/lib/schela/mail/senders
   while IFS= read -r box; do
     [ -n "$box" ] || continue
     addr="$(jq -r '.address' <<<"$box")"
@@ -656,6 +1022,8 @@ apply_mail() {
     domain="${addr#*@}"
     localpart="${addr%@*}"
     printf '%s %s/\n' "$addr" "$domain/$localpart" >>/var/lib/schela/mail/vmailbox
+    # Each mailbox login owns exactly its own address on submission.
+    printf '%s %s\n' "$addr" "$addr" >>/var/lib/schela/mail/senders
     grep -qxF "$domain" /var/lib/schela/mail/vdomains 2>/dev/null || echo "$domain" >>/var/lib/schela/mail/vdomains
     mkdir -p "/var/mail/schela/${domain}/${localpart}/cur" \
              "/var/mail/schela/${domain}/${localpart}/new" \
@@ -683,15 +1051,42 @@ apply_mail() {
   done < <(jq -c '.mailboxes // [] | .[]' "$STATE")
   chown -R vmail:vmail /var/mail/schela
   postmap /var/lib/schela/mail/vmailbox 2>/dev/null || true
-  chown root:root /var/lib/schela/mail/vmailbox /var/lib/schela/mail/vmailbox.db /var/lib/schela/mail/vdomains 2>/dev/null || true
-  chmod 644 /var/lib/schela/mail/vmailbox /var/lib/schela/mail/vmailbox.db /var/lib/schela/mail/vdomains 2>/dev/null || true
+  postmap /var/lib/schela/mail/senders 2>/dev/null || true
+  chown root:root /var/lib/schela/mail/vmailbox /var/lib/schela/mail/vmailbox.db /var/lib/schela/mail/vdomains \
+    /var/lib/schela/mail/senders /var/lib/schela/mail/senders.db 2>/dev/null || true
+  chmod 644 /var/lib/schela/mail/vmailbox /var/lib/schela/mail/vmailbox.db /var/lib/schela/mail/vdomains \
+    /var/lib/schela/mail/senders /var/lib/schela/mail/senders.db 2>/dev/null || true
   postconf -e "virtual_mailbox_base = /var/mail/schela"
   postconf -e "virtual_mailbox_maps = hash:/var/lib/schela/mail/vmailbox"
   postconf -e "virtual_mailbox_domains = /var/lib/schela/mail/vdomains"
   postconf -e "virtual_minimum_uid = 100"
   postconf -e "virtual_uid_maps = static:${vuid}"
   postconf -e "virtual_gid_maps = static:${vgid}"
+  # Port 25 offers STARTTLS but does not require it (other servers may not
+  # speak TLS) and never offers AUTH: clients authenticate on 587.
+  have_cert=0
+  if [ -s "$MAIL_TLS_CERT" ] && [ -s "$MAIL_TLS_KEY" ]; then
+    have_cert=1
+    postconf -e "smtpd_tls_cert_file = ${MAIL_TLS_CERT}"
+    postconf -e "smtpd_tls_key_file = ${MAIL_TLS_KEY}"
+  else
+    log "warning: ${MAIL_TLS_CERT} or ${MAIL_TLS_KEY} missing: mail keeps its previous TLS certificate; IMAP and submission still refuse passwords without TLS"
+  fi
+  postconf -e "smtpd_tls_security_level = may"
+  postconf -e "smtpd_sasl_auth_enable = no"
+  mail_submission
   if [ -d /etc/dovecot/conf.d ]; then
+    # Without the hostname certificate Dovecot keeps the distro one.
+    dove_ssl=""
+    if [ "$have_cert" -eq 1 ] && [ "$dove24" -eq 1 ]; then
+      dove_ssl="ssl_server_cert_file = ${MAIL_TLS_CERT}
+ssl_server_key_file = ${MAIL_TLS_KEY}
+"
+    elif [ "$have_cert" -eq 1 ]; then
+      dove_ssl="ssl_cert = <${MAIL_TLS_CERT}
+ssl_key = <${MAIL_TLS_KEY}
+"
+    fi
     if [ "$dove24" -eq 1 ]; then
       cat >/etc/dovecot/conf.d/99-schela.conf <<DOVE
 # Managed by schela-apply (Dovecot 2.4)
@@ -703,7 +1098,10 @@ mail_inbox_path =
 mail_uid = vmail
 mail_gid = vmail
 first_valid_uid = ${vuid}
-auth_allow_cleartext = yes
+# Passwords only over TLS, or from this host to itself (Dovecot treats a
+# connection whose remote IP equals its local IP as secured).
+ssl = required
+${dove_ssl}auth_allow_cleartext = no
 auth_mechanisms = plain login
 passdb passwd-file {
   passwd_file_path = /var/lib/schela/mail/users
@@ -713,10 +1111,21 @@ userdb passwd-file {
 }
 service auth {
   user = root
+  unix_listener /var/spool/postfix/private/auth {
+    mode = 0660
+    user = postfix
+    group = postfix
+  }
 }
+# 143 stays on loopback for the webmail; mail clients use 993.
 service imap-login {
   inet_listener imap {
+    listen = 127.0.0.1
     port = 143
+  }
+  inet_listener imaps {
+    port = 993
+    ssl = yes
   }
 }
 DOVE
@@ -736,14 +1145,28 @@ userdb {
   driver = passwd-file
   args = username_format=%u /var/lib/schela/mail/users
 }
-disable_plaintext_auth = no
+# Passwords only over TLS, or from this host to itself (Dovecot treats a
+# connection whose remote IP equals its local IP as secured).
+ssl = required
+${dove_ssl}disable_plaintext_auth = yes
 auth_mechanisms = plain login
 service auth {
   user = root
+  unix_listener /var/spool/postfix/private/auth {
+    mode = 0660
+    user = postfix
+    group = postfix
+  }
 }
+# 143 stays on loopback for the webmail; mail clients use 993.
 service imap-login {
   inet_listener imap {
+    address = 127.0.0.1
     port = 143
+  }
+  inet_listener imaps {
+    port = 993
+    ssl = yes
   }
 }
 DOVE
@@ -1398,11 +1821,32 @@ apply_dns() {
   named-checkconf >/dev/null 2>&1 && systemctl reload bind9 >/dev/null 2>&1 || true
 }
 
+# --- certificates ------------------------------------------------------------
+# nginx answers http-01 challenges from here for every Host on port 80.
+prepare_acme_root() {
+  mkdir -p "$ACME_ROOT/.well-known/acme-challenge"
+  chmod 755 /var/lib/schela "$ACME_ROOT" "$ACME_ROOT/.well-known" "$ACME_ROOT/.well-known/acme-challenge" || true
+}
+
+# certbot webroot issuance for one name. Output goes to the file in $2.
+certbot_webroot() {
+  certbot certonly --webroot -w "$ACME_ROOT" \
+    -d "$1" \
+    --non-interactive --agree-tos \
+    --register-unsafely-without-email \
+    --preferred-challenges http \
+    --keep-until-expiring \
+    >"$2" 2>&1
+}
+
+cert_expires() {
+  openssl x509 -enddate -noout -in "$1" 2>/dev/null | sed 's/notAfter=//' || true
+}
+
 issue_certs() {
   [ "$DRY" -eq 0 ] || return 0
   command -v certbot >/dev/null 2>&1 || { log "certbot missing"; return 0; }
-  mkdir -p "$ACME_ROOT/.well-known/acme-challenge"
-  chmod 755 /var/lib/schela "$ACME_ROOT" "$ACME_ROOT/.well-known" "$ACME_ROOT/.well-known/acme-challenge" || true
+  prepare_acme_root
   echo '{' >"$CERTS_JSON.tmp"
   first=1
   NEW_CERTS=0
@@ -1414,23 +1858,17 @@ issue_certs() {
     if cert_live "$domain"; then
       status="live"
       message="Certificate is active"
-      expires="$(openssl x509 -enddate -noout -in "/etc/letsencrypt/live/${domain}/fullchain.pem" 2>/dev/null | sed 's/notAfter=//' || true)"
+      expires="$(cert_expires "/etc/letsencrypt/live/${domain}/fullchain.pem")"
     else
       out="$(mktemp)"
       set +e
-      certbot certonly --webroot -w "$ACME_ROOT" \
-        -d "$domain" \
-        --non-interactive --agree-tos \
-        --register-unsafely-without-email \
-        --preferred-challenges http \
-        --keep-until-expiring \
-        >"$out" 2>&1
+      certbot_webroot "$domain" "$out"
       rc=$?
       set -e
       if [ "$rc" -eq 0 ] && cert_live "$domain"; then
         status="live"
         message="Certificate issued"
-        expires="$(openssl x509 -enddate -noout -in "/etc/letsencrypt/live/${domain}/fullchain.pem" 2>/dev/null | sed 's/notAfter=//' || true)"
+        expires="$(cert_expires "/etc/letsencrypt/live/${domain}/fullchain.pem")"
         NEW_CERTS=$((NEW_CERTS + 1))
         log "certificate issued for $domain"
       else
@@ -1453,11 +1891,352 @@ issue_certs() {
   chmod 644 "$CERTS_JSON"
 }
 
+# --- panel host certificate --------------------------------------------------
+# /var/lib/schela/tls/host.crt (full chain) and host.key (root only) always
+# hold the certificate for settings.hostname: Let's Encrypt when one is live,
+# else the self-signed one. Dovecot and Postfix read these two paths. The
+# panel by IP always uses the self-signed certificate: Let's Encrypt does not
+# issue for a bare IP with the certbot of any supported system (1.21 to 4.0
+# refuse "Requested name ... is an IP address").
+TLS_DIR="/var/lib/schela/tls"
+PANEL_CONF="/etc/nginx/sites-available/schela-panel.conf"
+DEPLOY_HOOK="/etc/letsencrypt/renewal-hooks/deploy/schela"
+HOST_CERT_KIND="self-signed"
+PANEL_VHOST_CHANGED=0
+PANEL_IPS=()
+
+# settings.hostname, else this machine's name. Never empty.
+panel_hostname() {
+  local h
+  h="$(jq -r '.settings.hostname // empty' "$STATE" 2>/dev/null || true)"
+  h="${h%.}"
+  h="${h,,}"
+  if ok_domain "$h" && ! ok_ipv4 "$h"; then printf '%s' "$h"; return; fi
+  h="$(hostname -f 2>/dev/null || hostname 2>/dev/null || true)"
+  h="${h,,}"
+  if ok_domain "$h" && ! ok_ipv4 "$h"; then printf '%s' "$h"; return; fi
+  printf 'localhost'
+}
+
+# Addresses on this machine's interfaces (no loopback, no link-local).
+panel_ips() {
+  local ip
+  for ip in $(hostname -I 2>/dev/null || true); do
+    if ok_ipv4 "$ip" || [[ "$ip" =~ ^[0-9A-Fa-f:]+$ && "$ip" == *:* ]]; then
+      printf '%s\n' "${ip,,}"
+    fi
+  done | awk '!seen[$0]++'
+}
+
+panel_port() {
+  local p="${SCHELA_PANEL_PORT:-}"
+  [ -n "$p" ] || p="$(sed -n 's/^Environment=PORT=\([0-9]*\)$/\1/p' /etc/systemd/system/schela-panel.service 2>/dev/null | head -n1)"
+  ok_port "$p" || p=9090
+  printf '%s' "$p"
+}
+
+# nginx 1.19.4 added ssl_reject_handshake; Ubuntu 22.04 ships 1.18.
+nginx_reject_handshake() {
+  local v
+  v="$(nginx -v 2>&1 | sed -n 's|.*nginx/\([0-9][0-9.]*\).*|\1|p')"
+  [ -n "$v" ] || return 1
+  [ "$(printf '%s\n1.19.4\n' "$v" | sort -V | head -n1)" = "1.19.4" ]
+}
+
+# The listen lines of a panel server on 443, IPv4 and IPv6.
+panel_listen_443() {
+  local opt="${1:+ $1}" h2=" http2" tail=""
+  if [ "${HTTP2_DIRECTIVE:-0}" -eq 1 ]; then
+    h2=""
+    tail=$';\n    http2 on'
+  fi
+  printf '443 ssl%s%s;\n    listen [::]:443 ssl%s%s%s' "$h2" "$opt" "$h2" "$opt" "$tail"
+}
+
+# The panel user owns /var/lib/schela and could put a link or its own
+# directory at tls; root only writes into a root-owned directory.
+prepare_tls_dir() {
+  if [ -L "$TLS_DIR" ] || { [ -e "$TLS_DIR" ] && [ "$(stat -c %u "$TLS_DIR")" != "0" ]; }; then
+    rm -rf "$TLS_DIR"
+  fi
+  install -d -m 0755 -o root -g root "$TLS_DIR"
+}
+
+# Self-signed certificate for the hostname and every address, renewed when
+# those change or it is 30 days from expiry.
+ensure_self_signed() {
+  local host="$1" san ip tmp
+  shift
+  san="DNS:${host}"
+  for ip in "$@"; do san+=",IP:${ip}"; done
+  # The marker names the profile too, so certificates from older applies (a CA,
+  # which clients such as rustls refuse as a server certificate) are replaced.
+  if [ -s "$TLS_DIR/self-signed.crt" ] && [ -s "$TLS_DIR/self-signed.key" ] \
+    && [ "$(cat "$TLS_DIR/self-signed.san" 2>/dev/null)" = "${san};leaf" ] \
+    && openssl x509 -checkend 2592000 -noout -in "$TLS_DIR/self-signed.crt" >/dev/null 2>&1; then
+    return 0
+  fi
+  tmp="$(mktemp -d "$TLS_DIR/.new.XXXXXX")"
+  if ! openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -subj "/CN=${host}" \
+    -addext "subjectAltName=${san}" -addext "basicConstraints=critical,CA:FALSE" \
+    -addext "keyUsage=critical,digitalSignature,keyEncipherment" \
+    -addext "extendedKeyUsage=serverAuth" \
+    -keyout "$tmp/key" -out "$tmp/crt" >/dev/null 2>&1; then
+    rm -rf "$tmp"
+    die "could not create the self-signed certificate for ${san}"
+  fi
+  chmod 600 "$tmp/key"
+  chmod 644 "$tmp/crt"
+  mv -f "$tmp/key" "$TLS_DIR/self-signed.key"
+  mv -f "$tmp/crt" "$TLS_DIR/self-signed.crt"
+  printf '%s\n' "${san};leaf" >"$TLS_DIR/self-signed.san"
+  rm -rf "$tmp"
+  log "self-signed certificate for ${san}"
+}
+
+# Copy a certificate and its key to the contract paths (no-op when equal).
+install_host_files() {
+  local crt="$1" key="$2"
+  if cmp -s "$crt" "$TLS_DIR/host.crt" && cmp -s "$key" "$TLS_DIR/host.key"; then
+    return 0
+  fi
+  install -m 0600 -o root -g root "$key" "$TLS_DIR/.host.key.new"
+  install -m 0644 -o root -g root "$crt" "$TLS_DIR/.host.crt.new"
+  mv -f "$TLS_DIR/.host.key.new" "$TLS_DIR/host.key"
+  mv -f "$TLS_DIR/.host.crt.new" "$TLS_DIR/host.crt"
+  log "host certificate: $crt"
+}
+
+le_valid() {
+  cert_live "$1" && openssl x509 -checkend 0 -noout -in "/etc/letsencrypt/live/${1}/fullchain.pem" >/dev/null 2>&1
+}
+
+# Names Let's Encrypt could issue for: a dotted public name and certbot here.
+le_eligible() {
+  command -v certbot >/dev/null 2>&1 || return 1
+  [[ "$1" == *.* ]] || return 1
+  [[ ! "$1" =~ \.(example|local|test|localhost|invalid|internal|lan)$ ]]
+}
+
+# Does the hostname reach this machine? Public DNS only (not /etc/hosts, which
+# often maps it to 127.0.1.1): yes when it resolves to an address of this
+# machine, or, behind NAT, when nginx here answers a token through it.
+host_points_here() {
+  local host="$1" addr token got rc=1
+  local -a addrs=()
+  mapfile -t addrs < <(getent -s dns ahosts "$host" 2>/dev/null | awk '{print tolower($1)}' | sort -u)
+  [ "${#addrs[@]}" -gt 0 ] || return 1
+  for addr in "${addrs[@]}"; do
+    in_list "$addr" "${PANEL_IPS[@]+"${PANEL_IPS[@]}"}" && return 0
+  done
+  command -v curl >/dev/null 2>&1 || return 1
+  token="schela-check-$(openssl rand -hex 16)"
+  printf '%s' "$token" >"$ACME_ROOT/.well-known/acme-challenge/$token"
+  for addr in "${addrs[@]}"; do
+    [[ "$addr" == *:* ]] && addr="[$addr]"
+    got="$(curl -s --max-time 5 --resolve "${host}:80:${addr}" \
+      "http://${host}/.well-known/acme-challenge/${token}" 2>/dev/null || true)"
+    if [ "$got" = "$token" ]; then rc=0; break; fi
+  done
+  rm -f "$ACME_ROOT/.well-known/acme-challenge/$token"
+  return "$rc"
+}
+
+# Write the panel vhost for the current HOST_CERT_KIND. A config nginx refuses
+# is rolled back, so a bad render never replaces a working panel.
+write_panel_vhost() {
+  local host="$1" names ip ip_names="" hsts="" reject conf old="" was_ok=0
+  for ip in "${PANEL_IPS[@]+"${PANEL_IPS[@]}"}"; do
+    if [[ "$ip" == *:* ]]; then ip_names+=" [${ip}]"; else ip_names+=" ${ip}"; fi
+  done
+  ip_names="${ip_names# }"
+  names="${host}${ip_names:+ ${ip_names}}"
+  [ -n "$ip_names" ] || ip_names="_"
+  # HSTS only with a publicly trusted certificate, and only for the hostname:
+  # no includeSubDomains, site domains may be subdomains of it.
+  if [ "$HOST_CERT_KIND" = "letsencrypt" ]; then
+    hsts='    add_header Strict-Transport-Security "max-age=31536000" always;'
+  fi
+  if nginx_reject_handshake; then
+    reject='    ssl_reject_handshake on;'
+  else
+    reject="    ssl_certificate ${TLS_DIR}/self-signed.crt;"$'\n'"    ssl_certificate_key ${TLS_DIR}/self-signed.key;"
+  fi
+  conf="$(render "$TEMPLATES/nginx-panel.conf" \
+    __LISTEN_443_DEFAULT__ "$(panel_listen_443 default_server)" \
+    __LISTEN_443__ "$(panel_listen_443)" \
+    __PANEL_NAMES__ "$names" \
+    __IP_NAMES__ "$ip_names" \
+    __HOSTNAME__ "$host" \
+    __REJECT_TLS__ "$reject" \
+    __HSTS__ "$hsts" \
+    __PANEL_PORT__ "$(panel_port)")"
+  [ -f "$PANEL_CONF" ] && old="$(cat "$PANEL_CONF")"
+  if [ "$old" = "$conf" ] && [ -L /etc/nginx/sites-enabled/schela-panel.conf ]; then
+    return 0
+  fi
+  # The distro welcome page is also default_server on port 80.
+  rm -f /etc/nginx/sites-enabled/default /etc/nginx/sites-enabled/default.conf /etc/nginx/conf.d/default.conf
+  # Only roll back what this render broke: when nginx already fails on
+  # something else, the rest of apply is what repairs it.
+  nginx -t >/dev/null 2>&1 && was_ok=1
+  write_file "$PANEL_CONF" "$conf"
+  ln -sfn "$PANEL_CONF" /etc/nginx/sites-enabled/schela-panel.conf
+  PANEL_VHOST_CHANGED=1
+  if [ "$was_ok" -eq 1 ] && ! nginx -t >/dev/null 2>&1; then
+    nginx -t || true
+    if [ -n "$old" ]; then
+      write_file "$PANEL_CONF" "$old"
+    else
+      rm -f "$PANEL_CONF" /etc/nginx/sites-enabled/schela-panel.conf
+    fi
+    die "nginx refused the panel vhost; kept the previous one"
+  fi
+}
+
+install_deploy_hook() {
+  local body
+  body='#!/bin/sh
+# Installed by schela-apply. certbot runs this after each renewal: it refreshes
+# the panel host certificate and certs.json, then reloads nginx, Dovecot and
+# Postfix.
+exec /usr/local/sbin/schela-apply --renew-hook'
+  mkdir -p "${DEPLOY_HOOK%/*}"
+  if [ "$(cat "$DEPLOY_HOOK" 2>/dev/null)" != "$body" ]; then
+    printf '%s\n' "$body" >"$DEPLOY_HOOK.tmp"
+    chmod 755 "$DEPLOY_HOOK.tmp"
+    mv -f "$DEPLOY_HOOK.tmp" "$DEPLOY_HOOK"
+  fi
+}
+
+reload_nginx_quiet() {
+  nginx -t >/dev/null 2>&1 && systemctl reload nginx >/dev/null 2>&1 || true
+}
+
+ensure_host_cert() {
+  local host url ip certlog rc
+  host="$(panel_hostname)"
+  mapfile -t PANEL_IPS < <(panel_ips)
+  if [ "$DRY" -eq 1 ]; then
+    log "would ensure the host certificate for $host and the panel vhost"
+    return 0
+  fi
+  need openssl
+  prepare_tls_dir
+  prepare_acme_root
+  ensure_self_signed "$host" "${PANEL_IPS[@]+"${PANEL_IPS[@]}"}"
+  HOST_CERT_KIND="self-signed"
+  if le_valid "$host"; then
+    HOST_CERT_KIND="letsencrypt"
+  elif le_eligible "$host"; then
+    # nginx has to answer the challenge for this name on port 80 first.
+    [ -s "$TLS_DIR/host.crt" ] && [ -s "$TLS_DIR/host.key" ] \
+      || install_host_files "$TLS_DIR/self-signed.crt" "$TLS_DIR/self-signed.key"
+    PANEL_VHOST_CHANGED=0
+    write_panel_vhost "$host"
+    [ "$PANEL_VHOST_CHANGED" -eq 0 ] || reload_nginx_quiet
+    if host_points_here "$host"; then
+      certlog="$(mktemp)"
+      set +e
+      certbot_webroot "$host" "$certlog"
+      rc=$?
+      set -e
+      if [ "$rc" -eq 0 ] && le_valid "$host"; then
+        HOST_CERT_KIND="letsencrypt"
+        log "certificate issued for $host"
+      else
+        log "certbot failed for $host, the panel keeps the self-signed certificate"
+        mkdir -p /var/log/schela
+        cp "$certlog" "/var/log/schela/certbot-${host}.log" || true
+      fi
+      rm -f "$certlog"
+    else
+      log "$host does not point here, the panel uses the self-signed certificate"
+    fi
+  fi
+  if [ "$HOST_CERT_KIND" = "letsencrypt" ]; then
+    install_host_files "/etc/letsencrypt/live/${host}/fullchain.pem" "/etc/letsencrypt/live/${host}/privkey.pem"
+    url="https://${host}/"
+  else
+    install_host_files "$TLS_DIR/self-signed.crt" "$TLS_DIR/self-signed.key"
+    ip="${PANEL_IPS[0]:-}"
+    if [ -z "$ip" ]; then
+      url="https://${host}/"
+    elif [[ "$ip" == *:* ]]; then
+      url="https://[${ip}]/"
+    else
+      url="https://${ip}/"
+    fi
+  fi
+  write_file "$TLS_DIR/host.env" "$(printf 'kind=%s\nhostname=%s\nurl=%s' "$HOST_CERT_KIND" "$host" "$url")"
+  write_panel_vhost "$host"
+  install_deploy_hook
+}
+
+# certs.json after a renewal: every name with a live certificate gets its new
+# expiry date.
+refresh_certs_json() {
+  local json d exp tmp
+  [ -f "$CERTS_JSON" ] || return 0
+  json="$(cat "$CERTS_JSON")"
+  jq -e 'type == "object"' <<<"$json" >/dev/null 2>&1 || return 0
+  while IFS= read -r d; do
+    ok_domain "$d" && cert_live "$d" || continue
+    exp="$(cert_expires "/etc/letsencrypt/live/${d}/fullchain.pem")"
+    json="$(jq --arg d "$d" --arg e "$exp" \
+      '.[$d] = {status: "live", message: "Certificate is active", expires: $e}' <<<"$json")"
+  done < <(jq -r 'keys[]' <<<"$json")
+  tmp="$(mktemp "$CERTS_JSON.XXXXXX")"
+  printf '%s\n' "$json" >"$tmp"
+  chmod 644 "$tmp"
+  mv -f "$tmp" "$CERTS_JSON"
+}
+
+# certbot deploy hook: RENEWED_LINEAGE is the live directory just renewed.
+renew_hook() {
+  local host rc=0 unit
+  host="$(panel_hostname)"
+  if [ "${RENEWED_LINEAGE:-}" = "/etc/letsencrypt/live/${host}" ] && cert_live "$host"; then
+    prepare_tls_dir
+    install_host_files "/etc/letsencrypt/live/${host}/fullchain.pem" "/etc/letsencrypt/live/${host}/privkey.pem"
+  fi
+  refresh_certs_json
+  if nginx -t; then
+    systemctl reload nginx || rc=1
+  else
+    log "nginx -t failed, nginx not reloaded"
+    rc=1
+  fi
+  for unit in dovecot postfix; do
+    if systemctl is-active --quiet "$unit"; then
+      systemctl reload "$unit" || rc=1
+    fi
+  done
+  log "renewal of ${RENEWED_LINEAGE:-unknown} deployed"
+  return "$rc"
+}
+
+case "$MODE" in
+  panel)
+    ensure_host_cert
+    nginx -t
+    systemctl reload nginx || systemctl restart nginx
+    log "panel on https with the $HOST_CERT_KIND certificate"
+    exit 0
+    ;;
+  renew-hook)
+    renew_hook || exit 1
+    exit 0
+    ;;
+esac
+
 log "applying $(jq -r '.settings.hostname // "unknown"' "$STATE")"
+ensure_host_cert
 apply_sites
 apply_apps
 apply_workers
 apply_firewall
+apply_auto_updates
 apply_mail
 apply_dns
 apply_cron
@@ -1467,6 +2246,7 @@ apply_mariadb
 apply_postgresql
 apply_search meilisearch
 apply_search typesense
+apply_fail2ban
 
 if [ "$DRY" -eq 0 ]; then
   mkdir -p "$ACME_ROOT/.well-known/acme-challenge"

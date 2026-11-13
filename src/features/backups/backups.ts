@@ -23,13 +23,14 @@ export function assertRsyncDest(raw: string): string {
   throw new Error("Use user@host:/path or rsync://host/module/path");
 }
 
-export function assertSshKey(raw: string): string {
-  const t = raw.trim();
+/** A pasted SSH private key (PEM or OpenSSH), or "" when none was given. */
+export function assertSshPrivateKey(raw: string): string {
+  const t = raw.replace(/\r\n?/g, "\n").trim();
   if (!t) return "";
-  if (!t.startsWith("/") || /[\n\r;|&$`\s]/.test(t) || t.includes("..")) {
-    throw new Error("SSH key must be an absolute path with no spaces");
+  if (t.length > 16384 || !/^-----BEGIN ([A-Z0-9]+ )*PRIVATE KEY-----\n[\s\S]+\n-----END ([A-Z0-9]+ )*PRIVATE KEY-----$/.test(t)) {
+    throw new Error("Paste the whole SSH private key, from -----BEGIN to -----END");
   }
-  return t;
+  return `${t}\n`;
 }
 
 export function assertS3Bucket(raw: string): string {

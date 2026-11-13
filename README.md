@@ -22,8 +22,12 @@ sudo bash install.sh
 When it finishes it prints:
 
 ```text
-Panel  http://<server-ip>/
+URL      http://<server-ip>/
+Username admin
+Password <random>
 ```
+
+The password is shown once and not saved anywhere on the server. Lost it? `sudo schela reset-admin-password` sets a new one and prints it once. Running the installer again never changes it.
 
 Open that URL. Set the hostname, pick modules, leave isolation on. Then create a site.
 
@@ -48,6 +52,7 @@ sudo schela apply          # rewrite nginx / PHP / UFW / mail / DNS from panel s
 sudo schela apply --dry-run
 sudo schela doctor
 sudo schela status
+sudo schela reset-admin-password   # new admin password, printed once
 ```
 
 The panel writes `/var/lib/schela/state.json` and runs `sudo schela-apply`. Managed files live under `/etc/nginx/schela.d`, `/etc/nginx/schela-apps.d`, and `/etc/php/*/fpm/pool.d/schela-*`. Distro defaults are left alone.
@@ -59,6 +64,7 @@ The panel writes `/var/lib/schela/state.json` and runs `sudo schela-apply`. Mana
 | `/opt/schela` | panel |
 | `/var/lib/schela` | database + state |
 | `/usr/local/sbin/schela-apply` | apply engine |
+| `/var/lib/schela/backup-keys` | backup S3 secret keys and SSH private keys (root only) |
 | `/home/<site-user>/www` | site files |
 
 ## Notes

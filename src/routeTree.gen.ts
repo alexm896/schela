@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as PanelRouteImport } from './routes/_panel'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as SetupRouteImport } from './routes/setup'
+import { Route as TwoFactorRouteImport } from './routes/two-factor'
 import { Route as WebmailRouteImport } from './routes/webmail'
 import { Route as PanelIndexRouteImport } from './routes/_panel.index'
 import { Route as PanelAppsRouteImport } from './routes/_panel.apps'
@@ -47,6 +48,11 @@ const LoginRoute = LoginRouteImport.update({
 const SetupRoute = SetupRouteImport.update({
   id: '/setup',
   path: '/setup',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TwoFactorRoute = TwoFactorRouteImport.update({
+  id: '/two-factor',
+  path: '/two-factor',
   getParentRoute: () => rootRouteImport,
 } as any)
 const WebmailRoute = WebmailRouteImport.update({
@@ -164,6 +170,7 @@ export interface FileRoutesByFullPath {
   '/': typeof PanelIndexRoute
   '/login': typeof LoginRoute
   '/setup': typeof SetupRoute
+  '/two-factor': typeof TwoFactorRoute
   '/webmail': typeof WebmailRouteWithChildren
   '/apps': typeof PanelAppsRoute
   '/backups': typeof PanelBackupsRoute
@@ -189,6 +196,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/setup': typeof SetupRoute
+  '/two-factor': typeof TwoFactorRoute
   '/apps': typeof PanelAppsRoute
   '/backups': typeof PanelBackupsRoute
   '/cron': typeof PanelCronRoute
@@ -215,6 +223,7 @@ export interface FileRoutesById {
   '/_panel': typeof PanelRouteWithChildren
   '/login': typeof LoginRoute
   '/setup': typeof SetupRoute
+  '/two-factor': typeof TwoFactorRoute
   '/webmail': typeof WebmailRouteWithChildren
   '/_panel/apps': typeof PanelAppsRoute
   '/_panel/backups': typeof PanelBackupsRoute
@@ -244,6 +253,7 @@ export interface FileRouteTypes {
     | '/'
     | '/login'
     | '/setup'
+    | '/two-factor'
     | '/webmail'
     | '/apps'
     | '/backups'
@@ -269,6 +279,7 @@ export interface FileRouteTypes {
   to:
     | '/login'
     | '/setup'
+    | '/two-factor'
     | '/apps'
     | '/backups'
     | '/cron'
@@ -294,6 +305,7 @@ export interface FileRouteTypes {
     | '/_panel'
     | '/login'
     | '/setup'
+    | '/two-factor'
     | '/webmail'
     | '/_panel/apps'
     | '/_panel/backups'
@@ -322,6 +334,7 @@ export interface RootRouteChildren {
   PanelRoute: typeof PanelRouteWithChildren
   LoginRoute: typeof LoginRoute
   SetupRoute: typeof SetupRoute
+  TwoFactorRoute: typeof TwoFactorRoute
   WebmailRoute: typeof WebmailRouteWithChildren
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
 }
@@ -347,6 +360,13 @@ declare module '@tanstack/react-router' {
       path: '/setup'
       fullPath: '/setup'
       preLoaderRoute: typeof SetupRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/two-factor': {
+      id: '/two-factor'
+      path: '/two-factor'
+      fullPath: '/two-factor'
+      preLoaderRoute: typeof TwoFactorRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/webmail': {
@@ -577,6 +597,7 @@ const rootRouteChildren: RootRouteChildren = {
   PanelRoute: PanelRouteWithChildren,
   LoginRoute: LoginRoute,
   SetupRoute: SetupRoute,
+  TwoFactorRoute: TwoFactorRoute,
   WebmailRoute: WebmailRouteWithChildren,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
 }

@@ -12,16 +12,18 @@ import { logActivity } from "@/server/activity";
 import { applyAfterChange } from "@/server/apply";
 import { getSql, type Sql } from "@/server/db";
 import { isVpsApply } from "@/server/env";
+import { bool } from "@/server/rows";
 import {
   BACKUP_JOB_REMOVAL_OPTIONS,
   assertRsyncDest,
   assertS3Bucket,
   assertS3Prefix,
-  assertSshKey,
+  assertSshPrivateKey,
   parseBackupScope,
 } from "./backups";
 import { mapBackupJob } from "./map";
 import { backupJobById, backupJobRemovalPlan, removeBackupJob } from "./removal";
+import { removeBackupSecrets, saveBackupSecret } from "./secrets";
 import type { BackupJob, BackupRun } from "./types";
 
 function backupRoot(): string {
@@ -114,7 +116,9 @@ const jobInput = z.object({
   enabled: z.boolean().default(true),
   rsyncEnabled: z.boolean().default(false),
   rsyncDest: z.string().max(240).default(""),
-  rsyncSshKey: z.string().max(240).default(""),
+  // A pasted SSH private key; blank keeps the stored one.
+  rsyncSshKey: z.string().max(16500).default(""),
+  rsyncKeyRemove: z.boolean().default(false),
   s3Enabled: z.boolean().default(false),
   s3Bucket: z.string().max(80).default(""),
   s3Prefix: z.string().max(120).default("schela/"),
@@ -131,7 +135,7 @@ function normalizeJob(data: z.infer<typeof jobInput>) {
     throw new Error("Pick a site or app for this backup");
   }
   const rsyncDest = data.rsyncEnabled ? assertRsyncDest(data.rsyncDest) : data.rsyncDest.trim();
-  const rsyncSshKey = data.rsyncEnabled ? assertSshKey(data.rsyncSshKey) : data.rsyncSshKey.trim();
+  const rsyncSshKey = assertSshPrivateKey(data.rsyncSshKey);
   const s3Bucket = data.s3Enabled ? assertS3Bucket(data.s3Bucket) : data.s3Bucket.trim();
   const s3Prefix = assertS3Prefix(data.s3Prefix);
   if (data.s3Enabled && !data.s3AccessKey.trim()) {
@@ -153,7 +157,7 @@ function normalizeJob(data: z.infer<typeof jobInput>) {
     s3Prefix,
     s3Region: data.s3Region.trim() || "us-east-1",
     s3AccessKey: data.s3AccessKey.trim(),
-    s3SecretKey: data.s3SecretKey,
+    s3SecretKey: data.s3SecretKey.trim(),
     s3Endpoint: data.s3Endpoint.trim().replace(/\/+$/, ""),
   };
 }
@@ -163,23 +167,33 @@ export const createBackupJob = createServerFn({ method: "POST" })
   .validator(jobInput)
   .handler(async ({ data }) => {
     const job = normalizeJob(data);
-    if (job.s3Enabled && !job.s3SecretKey.trim()) {
+    if (job.s3Enabled && !job.s3SecretKey) {
       throw new Error("S3 secret key is required");
     }
     const sql = await getSql();
-    await sql`
+    const rows = await sql<{ id: number }>`
       insert into backup_jobs (
         name, scope, target_id, include_mail, schedule, retain, enabled,
-        rsync_enabled, rsync_dest, rsync_ssh_key,
-        s3_enabled, s3_bucket, s3_prefix, s3_region, s3_access_key, s3_secret_key, s3_endpoint
+        rsync_enabled, rsync_dest,
+        s3_enabled, s3_bucket, s3_prefix, s3_region, s3_access_key, s3_endpoint
       ) values (
         ${job.name}, ${job.scope}, ${job.targetId}, ${job.includeMail}, ${job.schedule},
         ${job.retain}, ${job.enabled},
-        ${job.rsyncEnabled}, ${job.rsyncDest}, ${job.rsyncSshKey},
+        ${job.rsyncEnabled}, ${job.rsyncDest},
         ${job.s3Enabled}, ${job.s3Bucket}, ${job.s3Prefix}, ${job.s3Region},
-        ${job.s3AccessKey}, ${job.s3SecretKey.trim()}, ${job.s3Endpoint}
+        ${job.s3AccessKey}, ${job.s3Endpoint}
       )
+      returning id
     `;
+    const id = Number(rows[0].id);
+    try {
+      if (job.s3SecretKey) await saveBackupSecret(sql, id, "s3", job.s3SecretKey);
+      if (job.rsyncSshKey) await saveBackupSecret(sql, id, "ssh", job.rsyncSshKey);
+    } catch (err) {
+      await sql`delete from backup_jobs where id = ${id}`;
+      await removeBackupSecrets(null, [id]).catch(() => undefined);
+      throw err;
+    }
     await logActivity(sql, "backup", `Created backup ${job.name}`);
     await applyAfterChange(sql);
     return { ok: true as const };
@@ -191,12 +205,20 @@ export const updateBackupJob = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const job = normalizeJob(data);
     const sql = await getSql();
-    const current = await sql<{ s3_secret_key: string }>`
-      select s3_secret_key from backup_jobs where id = ${data.id}
+    const current = await sql<{ s3_secret_set: unknown; rsync_key_set: unknown }>`
+      select s3_secret_set, rsync_key_set from backup_jobs where id = ${data.id}
     `;
     if (!current[0]) throw new Error("Backup job not found");
-    const secret = job.s3SecretKey.trim() || current[0].s3_secret_key;
-    if (job.s3Enabled && !secret) throw new Error("S3 secret key is required");
+    // A blank secret keeps the stored one.
+    if (job.s3Enabled && !job.s3SecretKey && !bool(current[0].s3_secret_set)) {
+      throw new Error("S3 secret key is required");
+    }
+    if (job.s3SecretKey) await saveBackupSecret(sql, data.id, "s3", job.s3SecretKey);
+    if (job.rsyncSshKey) {
+      await saveBackupSecret(sql, data.id, "ssh", job.rsyncSshKey);
+    } else if (data.rsyncKeyRemove && bool(current[0].rsync_key_set)) {
+      await removeBackupSecrets(sql, [data.id], "ssh");
+    }
     await sql`
       update backup_jobs set
         name = ${job.name},
@@ -208,13 +230,11 @@ export const updateBackupJob = createServerFn({ method: "POST" })
         enabled = ${job.enabled},
         rsync_enabled = ${job.rsyncEnabled},
         rsync_dest = ${job.rsyncDest},
-        rsync_ssh_key = ${job.rsyncSshKey},
         s3_enabled = ${job.s3Enabled},
         s3_bucket = ${job.s3Bucket},
         s3_prefix = ${job.s3Prefix},
         s3_region = ${job.s3Region},
         s3_access_key = ${job.s3AccessKey},
-        s3_secret_key = ${secret},
         s3_endpoint = ${job.s3Endpoint}
       where id = ${data.id}
     `;

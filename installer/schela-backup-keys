@@ -1,0 +1,243 @@
+#!/usr/bin/env python3
+"""Write-only store for the secrets of backup destinations. JSON on stdin, JSON on stdout.
+
+The panel runs it through sudo with no arguments:
+
+  {"op": "set", "job": 3, "kind": "s3", "value": "<S3 secret key>"}
+  {"op": "set", "job": 3, "kind": "ssh", "value": "<SSH private key>"}
+      Stores the secret in /var/lib/schela/backup-keys/job-3.s3 (or .ssh),
+      root only. Answers a hint that is not the secret: the last four
+      characters of an S3 secret, the SHA256 fingerprint of an SSH key.
+  {"op": "import", "job": 3, "path": "/root/.ssh/backup_ed25519"}
+      Older panels kept only the path of an SSH key. Copies the key found
+      there (it must be a private key) into the store, like "set".
+  {"op": "delete", "jobs": [3, 4]}
+  {"op": "delete", "jobs": [3], "kind": "ssh"}
+      Removes the secrets of those jobs (only one kind when given).
+
+No op ever answers a secret: the panel cannot read one back. schela-backup is
+the only reader.
+"""
+from __future__ import annotations
+
+import json
+import os
+import re
+import secrets
+import stat
+import subprocess
+import sys
+from typing import Any
+
+UNDER_SUDO = "SUDO_USER" in os.environ
+
+
+def setting(name: str, default: str) -> str:
+    # Under sudo the caller never chooses paths (sudo also resets env).
+    return default if UNDER_SUDO else os.environ.get(name, default)
+
+
+STORE = os.path.normpath(setting("SCHELA_BACKUP_KEYS", "/var/lib/schela/backup-keys"))
+KINDS = ("s3", "ssh")
+MAX_KEY_BYTES = 16384
+S3_SECRET_RE = re.compile(r"[\x21-\x7e]{1,256}")
+SSH_KEY_RE = re.compile(
+    r"-----BEGIN ([A-Z0-9]+ )*PRIVATE KEY-----\n[A-Za-z0-9+/=:,\- \n]+\n-----END ([A-Z0-9]+ )*PRIVATE KEY-----"
+)
+
+
+class StoreError(Exception):
+    pass
+
+
+def fail(msg: str, code: int = 1) -> None:
+    sys.stdout.write(json.dumps({"ok": False, "error": msg}) + "\n")
+    raise SystemExit(code)
+
+
+def file_name(job: int, kind: str) -> str:
+    return f"job-{job}.{kind}"
+
+
+def job_id(raw: Any) -> int:
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 1 or raw > 2**31 - 1:
+        raise StoreError("Not a backup job id")
+    return raw
+
+
+def kind_of(raw: Any) -> str:
+    if raw not in KINDS:
+        raise StoreError("Unknown secret kind")
+    return str(raw)
+
+
+def open_store() -> int:
+    """The store directory as an fd: a real directory owned by root, mode 0700.
+
+    Its parent belongs to the panel user, who could swap the directory for a
+    link; every file operation goes through this fd, never through the path.
+    """
+    parent = os.open(os.path.dirname(STORE), os.O_RDONLY | os.O_DIRECTORY)
+    name = os.path.basename(STORE)
+    try:
+        try:
+            os.mkdir(name, 0o700, dir_fd=parent)
+        except FileExistsError:
+            pass
+        try:
+            fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
+        except OSError as exc:
+            raise StoreError(f"{STORE} is not a directory") from exc
+    finally:
+        os.close(parent)
+    st = os.fstat(fd)
+    if st.st_uid != 0:
+        os.close(fd)
+        raise StoreError(f"{STORE} is not owned by root")
+    os.fchmod(fd, 0o700)
+    return fd
+
+
+def write_secret(job: int, kind: str, data: bytes) -> str:
+    """Atomically replaces job-<id>.<kind>. Answers the hint."""
+    store = open_store()
+    try:
+        tmp = f".{file_name(job, kind)}.{secrets.token_hex(6)}"
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=store)
+        try:
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(data)
+                fh.flush()
+                os.fsync(fh.fileno())
+            hint = data.decode()[-4:] if kind == "s3" else ssh_fingerprint(store, tmp)
+            os.rename(tmp, file_name(job, kind), src_dir_fd=store, dst_dir_fd=store)
+        except BaseException:
+            try:
+                os.unlink(tmp, dir_fd=store)
+            except OSError:
+                pass
+            raise
+        return hint
+    finally:
+        os.close(store)
+
+
+def ssh_fingerprint(store: int, name: str) -> str:
+    """SHA256 fingerprint of the key (ssh-keygen); refuses what ssh cannot load."""
+    # Through the store's fd, which ssh-keygen inherits under the same number.
+    path = f"/proc/self/fd/{store}/{name}"
+    try:
+        proc = subprocess.run(
+            ["ssh-keygen", "-l", "-f", path],
+            pass_fds=(store,),
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except FileNotFoundError:
+        return ""
+    except subprocess.TimeoutExpired as exc:
+        raise StoreError("Not a usable SSH private key") from exc
+    parts = proc.stdout.split()
+    if proc.returncode != 0 or len(parts) < 2 or not parts[1].startswith("SHA256:"):
+        raise StoreError("Not a usable SSH private key (passphrase-protected keys cannot be used)")
+    return parts[1]
+
+
+def ssh_key_bytes(text: str) -> bytes:
+    key = text.replace("\r\n", "\n").replace("\r", "\n").strip()
+    if len(key) > MAX_KEY_BYTES or not SSH_KEY_RE.fullmatch(key):
+        raise StoreError("Not an SSH private key")
+    # ssh refuses an OpenSSH key without its final newline.
+    return (key + "\n").encode()
+
+
+def op_set(req: dict[str, Any]) -> dict[str, Any]:
+    job = job_id(req.get("job"))
+    kind = kind_of(req.get("kind"))
+    value = req.get("value")
+    if not isinstance(value, str):
+        raise StoreError("Missing secret")
+    if kind == "s3":
+        value = value.strip()
+        if not S3_SECRET_RE.fullmatch(value):
+            raise StoreError("Not an S3 secret key")
+        data = value.encode()
+    else:
+        data = ssh_key_bytes(value)
+    return {"hint": write_secret(job, kind, data)}
+
+
+def op_import(req: dict[str, Any]) -> dict[str, Any]:
+    job = job_id(req.get("job"))
+    path = req.get("path")
+    if not isinstance(path, str) or not path.startswith("/"):
+        raise StoreError("Not an absolute path")
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+    except OSError as exc:
+        raise StoreError(f"Cannot read {path}") from exc
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_size > MAX_KEY_BYTES:
+            raise StoreError(f"{path} is not a key file")
+        raw = os.read(fd, MAX_KEY_BYTES + 1)
+    finally:
+        os.close(fd)
+    try:
+        text = raw.decode("ascii")
+    except UnicodeDecodeError as exc:
+        raise StoreError("Not an SSH private key") from exc
+    return {"hint": write_secret(job, "ssh", ssh_key_bytes(text))}
+
+
+def op_delete(req: dict[str, Any]) -> dict[str, Any]:
+    jobs = req.get("jobs")
+    if not isinstance(jobs, list) or not jobs or len(jobs) > 1000:
+        raise StoreError("No backup jobs given")
+    ids = [job_id(j) for j in jobs]
+    kinds = [kind_of(req["kind"])] if req.get("kind") is not None else list(KINDS)
+    if not os.path.lexists(STORE):
+        return {"removed": 0}
+    store = open_store()
+    removed = 0
+    try:
+        for job in ids:
+            for kind in kinds:
+                try:
+                    os.unlink(file_name(job, kind), dir_fd=store)
+                    removed += 1
+                except FileNotFoundError:
+                    pass
+    finally:
+        os.close(store)
+    return {"removed": removed}
+
+
+OPS = {"set": op_set, "import": op_import, "delete": op_delete}
+
+
+def main() -> None:
+    if os.geteuid() != 0:
+        fail("root required")
+    if len(sys.argv) > 1:
+        fail("takes no arguments; send JSON on stdin")
+    try:
+        req = json.loads(sys.stdin.read(MAX_KEY_BYTES * 2) or "{}")
+    except ValueError:
+        fail("request is not JSON")
+    if not isinstance(req, dict) or req.get("op") not in OPS:
+        fail("unknown op")
+    os.umask(0o077)
+    try:
+        result = OPS[req["op"]](req)
+    except StoreError as exc:
+        fail(str(exc))
+    except OSError as exc:
+        fail(f"{exc.strerror or exc}")
+    sys.stdout.write(json.dumps({"ok": True, **result}) + "\n")
+
+
+if __name__ == "__main__":
+    main()

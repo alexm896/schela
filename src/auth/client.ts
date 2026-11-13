@@ -1,10 +1,13 @@
+import { twoFactorClient } from "better-auth/client/plugins";
 import { createAuthClient } from "better-auth/react";
 
 /**
  * Better Auth client for the panel (browser-side). Talks to the panel's own
  * Better Auth at same-origin `/api/auth/*`; the session is an HttpOnly cookie.
+ * `twoFactorClient` adds `authClient.twoFactor.*`; the login page itself sends
+ * the admin to the code step when sign-in answers `twoFactorRedirect`.
  */
-export const authClient = createAuthClient();
+export const authClient = createAuthClient({ plugins: [twoFactorClient()] });
 
 /**
  * Sign out, then go to `redirectTo`. Rejects when the server does not confirm:

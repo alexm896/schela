@@ -18,14 +18,17 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
 import { CRON_PRESETS } from "@/features/cron/cron";
 import { BACKUP_SCOPES } from "../backups";
 import type { BackupForm } from "../form";
+import type { BackupJob } from "../types";
 
 export function BackupJobDialog({
   open,
   onOpenChange,
   editing,
+  saved,
   form,
   onPatch,
   targets,
@@ -35,6 +38,8 @@ export function BackupJobDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   editing: boolean;
+  /** The job being edited: which secrets it already has (never the secrets). */
+  saved: BackupJob | null;
   form: BackupForm;
   onPatch: (patch: Partial<BackupForm>) => void;
   targets: { id: number; domain: string }[];
@@ -176,14 +181,35 @@ export function BackupJobDialog({
                   />
                 </div>
                 <div className="grid gap-2">
-                  <Label>SSH key (optional)</Label>
-                  <Input
+                  <Label>
+                    SSH private key (optional)
+                    {saved?.rsyncKeySet && !form.rsyncKeyRemove ? " (blank keeps current)" : ""}
+                  </Label>
+                  <Textarea
                     value={form.rsyncSshKey}
                     onChange={(e) => onPatch({ rsyncSshKey: e.target.value })}
-                    placeholder="/var/lib/schela/backup_id_ed25519"
-                    className="font-mono text-xs"
+                    placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
+                    className="min-h-20 font-mono text-xs"
                     spellCheck={false}
+                    autoComplete="off"
                   />
+                  {saved?.rsyncKeySet ? (
+                    <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                      <span className="truncate font-mono">
+                        Saved key {saved.rsyncKeyHint || ""}
+                      </span>
+                      <label className="flex shrink-0 items-center gap-2">
+                        Remove
+                        <Switch
+                          checked={form.rsyncKeyRemove}
+                          onCheckedChange={(v) => onPatch({ rsyncKeyRemove: v })}
+                        />
+                      </label>
+                    </div>
+                  ) : null}
+                  <p className="text-xs text-muted-foreground">
+                    Stored root only on this server. The panel cannot show it again.
+                  </p>
                 </div>
               </div>
             ) : null}
@@ -246,7 +272,12 @@ export function BackupJobDialog({
                   />
                 </div>
                 <div className="grid gap-2">
-                  <Label>Secret key{editing ? " (blank keeps current)" : ""}</Label>
+                  <Label>
+                    Secret key
+                    {saved?.s3SecretSet
+                      ? ` (saved, ends in ${saved.s3SecretHint}; blank keeps it)`
+                      : ""}
+                  </Label>
                   <Input
                     type="password"
                     value={form.s3SecretKey}
