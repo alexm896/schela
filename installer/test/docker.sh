@@ -19,13 +19,15 @@ for base in "${bases[@]}"; do
     failed+=("$base (build)")
     continue
   fi
-  docker run --rm "$tag" || failed+=("$base")
+  # NET_ADMIN: schela-apply drives the real ufw (installer/test/firewall.sh).
+  docker run --rm --cap-add NET_ADMIN "$tag" || failed+=("$base")
+  bash installer/test/firewall-traffic.sh "$tag" || failed+=("$base (firewall traffic)")
   if [ "${SCHELA_TEST_NETWORK:-1}" = "1" ]; then
     docker run --rm -v "$ROOT/installer:/opt/schela/installer:ro" "$base" \
       bash /opt/schela/installer/test/packages.sh || failed+=("$base (packages)")
     # The real engines; downloads are verified and kept in .cache between runs.
     mkdir -p "$ROOT/.cache/search-downloads"
-    docker run --rm -v "$ROOT/installer:/opt/schela/installer:ro" \
+    docker run --rm --cap-add NET_ADMIN -v "$ROOT/installer:/opt/schela/installer:ro" \
       -v "$ROOT/.cache/search-downloads:/var/cache/schela-downloads" \
       -e SCHELA_DOWNLOAD_CACHE=/var/cache/schela-downloads "$tag" \
       bash /opt/schela/installer/test/search.sh || failed+=("$base (search)")

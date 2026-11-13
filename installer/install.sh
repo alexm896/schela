@@ -319,19 +319,30 @@ systemctl restart schela-panel
 systemctl reload nginx || systemctl restart nginx
 
 log "Firewall"
-ufw --force reset >/dev/null 2>&1 || true
-ufw default deny incoming
-ufw default allow outgoing
-ufw allow 22/tcp
+# schela-apply owns the ruleset (SSH, HTTP, HTTPS, module ports, panel rules)
+# and converges it on every apply. Until the first apply: a safe base with SSH
+# on every port sshd is configured for. No reset, so ufw is never disabled and
+# a reinstall keeps the rules the panel applied.
+sed -i 's/^IPV6=.*/IPV6=yes/' /etc/default/ufw
+[ -d /run/sshd ] || install -d -m 0755 /run/sshd
+SSH_PORTS="$(sshd -T 2>/dev/null | awk '
+  $1 == "port" { print $2 }
+  $1 == "listenaddress" { n = split($2, a, ":"); print a[n] }' | sort -un || true)"
+for port in ${SSH_PORTS:-22}; do ufw allow "${port}/tcp"; done
 ufw allow 80/tcp
 ufw allow 443/tcp
-case ",$MODULES_CSV," in *,mail,*) ufw allow 25/tcp; ufw allow 587/tcp; ufw allow 993/tcp ;; esac
-case ",$MODULES_CSV," in *,dns,*) ufw allow 53 ;; esac
-ufw --force enable
+grep -qx 'DEFAULT_INPUT_POLICY="DROP"' /etc/default/ufw || ufw default deny incoming
+grep -qx 'DEFAULT_OUTPUT_POLICY="ACCEPT"' /etc/default/ufw || ufw default allow outgoing
+LC_ALL=C ufw status | grep -x 'Status: active' >/dev/null || ufw --force enable
 
 log "Unattended upgrades"
 echo 'Unattended-Upgrade::Automatic-Reboot "false";' > /etc/apt/apt.conf.d/52schela
-dpkg-reconfigure -f noninteractive unattended-upgrades >/dev/null 2>&1 || true
+# The panel setting "Unattended upgrades" (on by default); schela-apply writes
+# the same file on every apply.
+AUTO_UPGRADES=1
+[ "$(jq -r '.settings.autoUpdates' /var/lib/schela/state.json 2>/dev/null)" = "false" ] && AUTO_UPGRADES=0
+printf '// Managed by Schela: the panel setting "Unattended upgrades".\nAPT::Periodic::Update-Package-Lists "%s";\nAPT::Periodic::Unattended-Upgrade "%s";\n' \
+  "$AUTO_UPGRADES" "$AUTO_UPGRADES" >/etc/apt/apt.conf.d/20auto-upgrades
 
 log "Fail2ban"
 systemctl enable --now fail2ban

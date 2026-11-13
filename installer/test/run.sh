@@ -615,6 +615,7 @@ bash "$ROOT/installer/test/databases.sh"
 bash "$ROOT/installer/test/dns-zone.sh"
 bash "$ROOT/installer/test/purge.sh"
 bash "$ROOT/installer/test/mail.sh"
+bash "$ROOT/installer/test/firewall.sh"
 
 echo "== schela-purge account"
 export SCHELA_STATE=/tmp/schela-purge-state.json

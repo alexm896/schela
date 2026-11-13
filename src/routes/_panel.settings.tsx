@@ -76,6 +76,11 @@ function SettingsPage() {
                 onChange={(e) => setSshPort(e.target.value)}
                 inputMode="numeric"
               />
+              <p className="text-xs text-muted-foreground">
+                Schela does not change sshd. This tells the firewall which port sshd uses. The
+                firewall also keeps open every port sshd is configured for or listening on, so a
+                wrong value here cannot lock you out.
+              </p>
             </div>
             <Button onClick={() => void saveIdentity()} disabled={busy} className="w-fit">
               {busy ? "Saving…" : "Save"}
@@ -149,7 +154,11 @@ function SettingsPage() {
             <div className="flex items-center justify-between rounded-lg bg-secondary px-3 py-3">
               <div>
                 <p className="text-sm font-medium">Unattended upgrades</p>
-                <p className="text-xs text-muted-foreground">Security patches only</p>
+                <p className="text-xs text-muted-foreground">
+                  Daily apt refresh and unattended-upgrades with the system&apos;s default
+                  origins: security updates on Ubuntu, security and point-release updates on
+                  Debian. No automatic reboot.
+                </p>
               </div>
               <Switch
                 checked={settings.autoUpdates}

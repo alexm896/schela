@@ -2,7 +2,6 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { bootstrapAdminIfNeeded } from "@/auth/bootstrap-admin";
 import { authMiddleware } from "@/auth/middleware";
-import { seedBaseFirewall } from "@/features/firewall/defaults";
 import { readModules, seedModules } from "@/features/modules/modules";
 import { logActivity } from "@/server/activity";
 import { applyAfterChange } from "@/server/apply";
@@ -60,7 +59,6 @@ export const completeSetup = createServerFn({ method: "POST" })
     `;
     const enabled = new Set(["ssl", ...data.modules]);
     await seedModules(sql, [...enabled]);
-    await seedBaseFirewall(sql);
     await logActivity(sql, "setup", "Schela is ready");
     const settings = await readSettings(sql);
     const modules = await readModules(sql);
