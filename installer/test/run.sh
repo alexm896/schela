@@ -18,6 +18,9 @@ pass "python/bash syntax"
 
 bash "$ROOT/installer/test/lib.sh"
 bash "$ROOT/installer/test/sudo.sh"
+# Before the runtime-version cases below, which delete /etc/php/8.1 and 8.5
+# (the distro PHP on Ubuntu 22.04 and 26.04) that this one runs PHP-FPM from.
+bash "$ROOT/installer/test/hardening.sh"
 
 echo "== sudoers"
 grep -q 'NOPASSWD: /usr/local/sbin/schela-backup run \*' "$INS/templates/sudoers" \
