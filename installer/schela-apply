@@ -1969,14 +1969,19 @@ ensure_self_signed() {
   shift
   san="DNS:${host}"
   for ip in "$@"; do san+=",IP:${ip}"; done
+  # The marker names the profile too, so certificates from older applies (a CA,
+  # which clients such as rustls refuse as a server certificate) are replaced.
   if [ -s "$TLS_DIR/self-signed.crt" ] && [ -s "$TLS_DIR/self-signed.key" ] \
-    && [ "$(cat "$TLS_DIR/self-signed.san" 2>/dev/null)" = "$san" ] \
+    && [ "$(cat "$TLS_DIR/self-signed.san" 2>/dev/null)" = "${san};leaf" ] \
     && openssl x509 -checkend 2592000 -noout -in "$TLS_DIR/self-signed.crt" >/dev/null 2>&1; then
     return 0
   fi
   tmp="$(mktemp -d "$TLS_DIR/.new.XXXXXX")"
   if ! openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -subj "/CN=${host}" \
-    -addext "subjectAltName=${san}" -keyout "$tmp/key" -out "$tmp/crt" >/dev/null 2>&1; then
+    -addext "subjectAltName=${san}" -addext "basicConstraints=critical,CA:FALSE" \
+    -addext "keyUsage=critical,digitalSignature,keyEncipherment" \
+    -addext "extendedKeyUsage=serverAuth" \
+    -keyout "$tmp/key" -out "$tmp/crt" >/dev/null 2>&1; then
     rm -rf "$tmp"
     die "could not create the self-signed certificate for ${san}"
   fi
@@ -1984,7 +1989,7 @@ ensure_self_signed() {
   chmod 644 "$tmp/crt"
   mv -f "$tmp/key" "$TLS_DIR/self-signed.key"
   mv -f "$tmp/crt" "$TLS_DIR/self-signed.crt"
-  printf '%s\n' "$san" >"$TLS_DIR/self-signed.san"
+  printf '%s\n' "${san};leaf" >"$TLS_DIR/self-signed.san"
   rm -rf "$tmp"
   log "self-signed certificate for ${san}"
 }

@@ -209,6 +209,19 @@ check "host.key is root-only (0600 root)" [ "$(stat -c '%a %U' "$TLS/host.key" 2
 check "host.crt is the self-signed certificate without Let's Encrypt" cmp -s "$TLS/host.crt" "$TLS/self-signed.crt"
 san="$(openssl x509 -noout -ext subjectAltName -in "$TLS/self-signed.crt" 2>/dev/null)"
 check "self-signed certificate names the hostname and the IP" bash -c 'grep -q "DNS:$1" <<<"$3" && grep -q "IP Address:$2" <<<"$3"' _ "$HOST" "$IP" "$san"
+# A server certificate, not a CA: clients such as rustls refuse a CA as the
+# end entity (CaUsedAsEndEntity) even after the user accepts it.
+bc="$(openssl x509 -noout -ext basicConstraints,extendedKeyUsage -in "$TLS/self-signed.crt" 2>/dev/null)"
+check "self-signed certificate is a leaf (CA:FALSE)" bash -c 'grep -q "CA:FALSE" <<<"$1" && ! grep -q "CA:TRUE" <<<"$1"' _ "$bc"
+check "self-signed certificate is for TLS servers (serverAuth)" bash -c 'grep -q "TLS Web Server Authentication" <<<"$1"' _ "$bc"
+# A certificate an older apply made (a CA) is replaced on the next apply.
+openssl req -x509 -newkey rsa:2048 -nodes -days 30 -subj "/CN=${HOST}" \
+  -addext "subjectAltName=DNS:${HOST},IP:${IP}" \
+  -keyout "$TLS/self-signed.key" -out "$TLS/self-signed.crt" >/dev/null 2>&1
+printf 'DNS:%s,IP:%s\n' "$HOST" "$IP" >"$TLS/self-signed.san"
+apply || bad "apply over an older self-signed certificate"
+bc="$(openssl x509 -noout -ext basicConstraints -in "$TLS/self-signed.crt" 2>/dev/null)"
+check "an older self-signed CA certificate is replaced by a leaf" bash -c 'grep -q "CA:FALSE" <<<"$1"' _ "$bc"
 served="$(openssl s_client -connect 127.0.0.1:443 -servername "$HOST" </dev/null 2>/dev/null | openssl x509 -noout -fingerprint 2>/dev/null)"
 check "nginx serves host.crt for the hostname" same_text "$served" "$(openssl x509 -noout -fingerprint -in "$TLS/host.crt" 2>/dev/null)"
 check "schela url gives https://IP with the self-signed certificate" [ "$(bash "$INS/schela" url)" = "https://${IP}/" ]
