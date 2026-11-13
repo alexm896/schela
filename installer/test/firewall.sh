@@ -331,7 +331,9 @@ auto_updates_on() {
 main_flow_calls_both() {
   grep -qx 'apply_firewall' "$INS/schela-apply" && grep -qx 'apply_auto_updates' "$INS/schela-apply" \
     || err "schela-apply does not call apply_firewall and apply_auto_updates"
-  ! grep -qE 'ufw (--force )?(reset|disable)' "$INS/schela-apply" || err "schela-apply resets or disables ufw"
+  # Code only: comments may name the commands.
+  ! grep -vE '^[[:space:]]*#' "$INS/schela-apply" | grep -qE 'ufw (--force )?(reset|disable)' \
+    || err "schela-apply resets or disables ufw"
 }
 
 # --- install.sh sections ------------------------------------------------------

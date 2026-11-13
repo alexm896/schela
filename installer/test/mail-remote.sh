@@ -16,7 +16,8 @@ trap cleanup EXIT
 
 echo "== mail from another host"
 docker network create "$net" >/dev/null || exit 1
-srv="$(docker run -d --network "$net" "$tag" sleep infinity)" || exit 1
+# NET_ADMIN: schela-apply also converges the real ufw.
+srv="$(docker run -d --cap-add NET_ADMIN --network "$net" "$tag" sleep infinity)" || exit 1
 # Its own report comes from run.sh; here it only prepares the server. Go on
 # even if it fails, so every remote case still reports.
 rc=0

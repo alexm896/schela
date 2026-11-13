@@ -336,6 +336,12 @@ async function freshDatabase() {
       `HTTP ${pw.status}, body=${JSON.stringify(pwBody)}`,
     );
 
+    check(
+      "the pending two-factor sign-in cookie is a __Host- cookie",
+      step1.jar.cookies.has("__Host-schela.two_factor") && !step1.jar.has("better-auth."),
+      [...step1.jar.cookies.keys()].join(", "),
+    );
+
     const codeStep = client(o, "192.0.2.43", { jar: step1.jar });
     const badCode = await codeStep.post("/two-factor/verify-totp", { code: wrongTotp(totpURI) });
     failedFrom("192.0.2.43");

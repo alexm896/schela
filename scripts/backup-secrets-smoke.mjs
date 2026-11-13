@@ -33,6 +33,7 @@ const keysDir = join(tmp, "keys");
 const binDir = join(tmp, "bin");
 const statePath = join(tmp, "state.json");
 const helperLog = join(tmp, "helper.jsonl");
+const applyLog = join(tmp, "apply.log");
 mkdirSync(keysDir);
 mkdirSync(binDir);
 
@@ -47,6 +48,10 @@ if (helper.endsWith("/schela-backup-keys")) {
   const dir = ${JSON.stringify(keysDir)};
   const file = (job, kind) => dir + "/job-" + job + "." + kind;
   let hint = "";
+  if (req.op === "set" && req.value === "stuck-secret-0000") {
+    process.stdout.write(JSON.stringify({ ok: false, error: "refused" }) + "\\n");
+    process.exit(1);
+  }
   if (req.op === "set") {
     writeFileSync(file(req.job, req.kind), req.value);
     hint = req.kind === "s3" ? req.value.slice(-4) : "SHA256:stub";
@@ -60,6 +65,7 @@ if (helper.endsWith("/schela-backup-keys")) {
   }
   process.stdout.write(JSON.stringify({ ok: true, hint }) + "\\n");
 } else if (helper.endsWith("/schela-apply")) {
+  appendFileSync(${JSON.stringify(applyLog)}, "apply\\n");
   process.exit(0);
 } else {
   process.stdout.write(JSON.stringify({ ok: true }) + "\\n");
@@ -256,6 +262,10 @@ try {
   );
   await start();
   await fetch(`${origin}/login`).then((r) => r.text());
+  // The login page starts the move in the background: wait for its apply.
+  for (let i = 0; i < 60 && readState().includes("legacy-secret-1234"); i++) {
+    await new Promise((r) => setTimeout(r, 250));
+  }
   await stop();
 
   await step("older panel: S3 secret and key path are gone from the database", async () => {
@@ -286,6 +296,28 @@ try {
     );
   });
 
+  // A secret the helper refuses stays behind. The login page is public: it may
+  // start one move per panel process, never one apply per request.
+  await withDb(async (db) => {
+    await db.query(
+      `insert into backup_jobs (name, s3_enabled, s3_bucket, s3_access_key, s3_secret_key)
+       values ('stuck', true, 'schela-stuck', 'AKIASTUCK', 'stuck-secret-0000')`,
+    );
+  });
+  writeFileSync(applyLog, "");
+  await start();
+  for (let i = 0; i < 3; i++) await fetch(`${origin}/login`).then((r) => r.text());
+  await new Promise((r) => setTimeout(r, 2000));
+  await step("a secret left behind starts one apply per panel start, not one per login page", async () => {
+    const applies = readFileSync(applyLog, "utf8").split("\n").filter(Boolean).length;
+    check(
+      "a secret left behind starts one apply per panel start, not one per login page",
+      applies === 1,
+      `applies=${applies}`,
+    );
+  });
+  await stop();
+  await withDb(async (db) => db.query("delete from backup_jobs where name = 'stuck'"));
   await start();
   await signIn();
 

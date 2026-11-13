@@ -140,6 +140,9 @@ export const auth = betterAuth({
       session_data: { name: "__Host-schela.session_data" },
       account_data: { name: "__Host-schela.account_data" },
       dont_remember: { name: "__Host-schela.dont_remember" },
+      // twoFactor plugin: the pending sign-in and the trusted-device cookie.
+      two_factor: { name: "__Host-schela.two_factor" },
+      trust_device: { name: "__Host-schela.trust_device" },
     },
   },
 

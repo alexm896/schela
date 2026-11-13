@@ -11,6 +11,8 @@ import { isVpsApply } from "@/server/env";
 import { ensureSetup, readSettings } from "./settings";
 import type { PanelState } from "./types";
 
+const globalRef = globalThis as typeof globalThis & { __schelaLegacyMoveStarted__?: boolean };
+
 /**
  * The only panel data shown before sign-in: the hostname on the login page.
  * Also runs first-boot setup and creates the bootstrap admin, which must
@@ -23,12 +25,13 @@ export const getLoginInfo = createServerFn({ method: "GET" }).handler(
     const sql = await getSql();
     await ensureSetup(sql);
     await bootstrapAdminIfNeeded();
-    if (isVpsApply()) {
-      try {
-        if (await hasLegacyBackupSecrets(sql)) await applyAfterChange(sql);
-      } catch (err) {
-        console.error("[schela] backup secrets not moved yet:", err);
-      }
+    // Once per panel process and in the background: this page is public, so a
+    // visitor must neither wait for an apply nor be able to start one per request.
+    if (isVpsApply() && !globalRef.__schelaLegacyMoveStarted__) {
+      globalRef.__schelaLegacyMoveStarted__ = true;
+      void hasLegacyBackupSecrets(sql)
+        .then((left) => (left ? applyAfterChange(sql) : undefined))
+        .catch((err) => console.error("[schela] backup secrets not moved yet:", err));
     }
     const settings = await readSettings(sql);
     return { hostname: settings.hostname };

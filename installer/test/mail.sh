@@ -42,6 +42,7 @@ mkdir -p /var/lib/schela /var/mail/schela
 export SCHELA_STATE=/tmp/schela-mail-state.json
 export SCHELA_VERSIONS="${SCHELA_VERSIONS:-$INS/versions.json}"
 export SCHELA_TEMPLATES="${SCHELA_TEMPLATES:-/usr/local/share/schela/templates}"
+[ -d "$SCHELA_TEMPLATES" ] || SCHELA_TEMPLATES="$INS/templates"
 export SCHELA_MAIL_PASS='Secret-123'
 export SCHELA_HOST_CRT=/var/lib/schela/tls/host.crt
 HASH="$(doveadm pw -s SSHA512 -p "$SCHELA_MAIL_PASS")"
@@ -55,11 +56,11 @@ if dovecot --version | grep -q '^2\.3'; then cleartext_off='disable_plaintext_au
 dove_set() { [ "$(doveconf -h "${1%%=*}" 2>/dev/null)" = "${1#*=}" ]; }
 sub_opt() { [ "$(postconf -Ph "submission/inet/$1" 2>/dev/null)" = "$2" ]; }
 
-# Hostname certificate missing (the contract says it exists; this is the fallback).
+# Hostname certificate gone: apply makes it (ensure_host_cert) before mail.
 rm -rf /var/lib/schela/tls
 apply
-check "missing hostname certificate: apply logs a warning" \
-  grep -q 'warning: /var/lib/schela/tls/host.crt or /var/lib/schela/tls/host.key missing' /tmp/schela-mail.out
+check "missing hostname certificate: apply recreates it before mail" \
+  bash -c "[ -s /var/lib/schela/tls/host.crt ] && [ -s /var/lib/schela/tls/host.key ] && ! grep -q 'warning: /var/lib/schela/tls/host.crt' /tmp/schela-mail.out"
 doveconf -n >/tmp/doveconf.out 2>&1 || { cat /tmp/doveconf.out; fail "doveconf -n"; }
 check "missing hostname certificate: dovecot still refuses passwords without TLS ($cleartext_off, ssl=required)" \
   bash -c "$(declare -f dove_set); dove_set $cleartext_off && dove_set ssl=required"
