@@ -360,9 +360,12 @@ apply_apps() {
       fi
 
       unit_file="$SYSTEMD_DIR/${unit}.service"
+      # The name is free text from the panel: a newline would add unit lines
+      # (ExecStartPre=+ runs as root) and % is a systemd specifier.
+      label="${name//[^A-Za-z0-9 ._-]/_}"
       content="$(cat <<UNIT
 [Unit]
-Description=Schela Node app ${name}
+Description=Schela Node app ${label}
 After=network.target
 [Service]
 Type=simple

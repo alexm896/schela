@@ -168,6 +168,26 @@ check "a running app restarts when its unit changed" grep -qx 'restart schela-ap
 rm -f /tmp/hx-active-schela-app-hxapp
 check "the template unit is gone (apply writes app units)" test ! -e "$INS/templates/schela-app@.service"
 
+# The app name is free text from the panel: a newline in it must not add unit
+# lines (ExecStartPre=+ would run as root).
+python3 - "$SCHELA_STATE" <<'PY2'
+import json, sys
+p = sys.argv[1]
+s = json.load(open(p))
+s["apps"].append({"name": "x\nExecStartPre=+/usr/bin/touch /tmp/hx-pwned", "domain": "evil.hx.test",
+                  "nodeVersion": "22", "port": 3902, "entry": "index.js", "status": "running", "ip": ""})
+s["apps"].append({"name": "pct %h %i", "domain": "pct.hx.test",
+                  "nodeVersion": "22", "port": 3903, "entry": "index.js", "status": "running", "ip": ""})
+json.dump(s, open(p, "w"))
+PY2
+apply_now
+EU="$(ls "$SCHELA_SYSTEMD_DIR"/schela-app-x-*.service 2>/dev/null | head -1)"
+check "an app with a newline in its name still gets its unit" test -n "$EU"
+check "an app name cannot add unit lines" bash -c "[ -n '$EU' ] && ! grep -q '^ExecStartPre' '$EU' && [ \"\$(grep -c '^Description=' '$EU')\" = 1 ] && [ \"\$(grep -c '^ExecStart=' '$EU')\" = 1 ]"
+PU="$SCHELA_SYSTEMD_DIR/schela-app-pct-h-i.service"
+check "an app name cannot use systemd specifiers" bash -c "[ -f '$PU' ] && ! grep '^Description=' '$PU' | grep -q '%'"
+rm -f "$EU" "$PU" /etc/nginx/schela-apps.d/app-evil.hx.test*.conf /etc/nginx/schela-apps.d/app-pct.hx.test*.conf
+
 # --- P1.7: fail2ban -----------------------------------------------------------
 echo "== fail2ban jails"
 J=/etc/fail2ban/jail.d/schela.conf
