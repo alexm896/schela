@@ -12,11 +12,14 @@
  * verified id via `@/auth/middleware`.
  */
 import { betterAuth } from "better-auth";
+import { twoFactor } from "better-auth/plugins/two-factor";
 import { tanstackStartCookies } from "better-auth/tanstack-start";
 import { randomBytes } from "node:crypto";
 import { Pool } from "pg";
 import { ensureDbReady, getPglite } from "@/server/db";
 import { userCount } from "./admin.server";
+import { CLIENT_IP_HEADER } from "./client-ip";
+import { failedSignInLog } from "./failed-sign-in-log";
 import { pgliteDialect } from "./pglite-dialect";
 
 // Kick (and share) PGLite bootstrap as soon as the auth server module loads.
@@ -129,6 +132,9 @@ export const auth = betterAuth({
   // Auth would otherwise use `__Secure-` (which permits Domain), so its prefix
   // is turned off and Secure + the names are set here.
   advanced: {
+    // Client address for the rate limiter and session rows: the header nginx
+    // overwrites with $remote_addr, never the forgeable X-Forwarded-For.
+    ipAddress: { ipAddressHeaders: [CLIENT_IP_HEADER] },
     useSecureCookies: false,
     defaultCookieAttributes: vpsHttpCookies
       ? { secure: false, sameSite: "lax", path: "/" }
@@ -148,7 +154,18 @@ export const auth = betterAuth({
         },
   },
 
+  // Rate limiting: Better Auth's own limiter, on by default when NODE_ENV is
+  // production (the schela-panel unit sets it), in memory (one process), keyed
+  // per client address (`advanced.ipAddress`). Its built-in limits apply:
+  // /sign-in/* 3 requests per 10 s, the twoFactor plugin's /two-factor/* 3 per
+  // 10 s, everything else 100 per 10 s.
+
   plugins: [
+    // TOTP with recovery codes, opt-in from Settings. Sign-in with it on stops
+    // after the password with no session until a code is verified.
+    twoFactor({ issuer: "Schela" }),
+    // One stdout line per failed sign-in or two-factor code, for fail2ban.
+    failedSignInLog(),
     // Bridges Better Auth's Set-Cookie into TanStack Start responses. MUST be
     // last so it runs after every other plugin's hooks.
     tanstackStartCookies(),
